@@ -6,6 +6,7 @@ import AIGenerateView from './components/AIGenerateView';
 import ExamCreatorView from './components/ExamCreatorView';
 import PrintView from './components/PrintView';
 import ReportsView from './components/ReportsView';
+import firebaseConfig from '../firebase-applet-config.json';
 import { 
   auth, 
   db, 
@@ -49,7 +50,8 @@ import {
   LogIn,
   LogOut,
   CheckCircle2,
-  ShieldCheck
+  ShieldCheck,
+  Copy
 } from 'lucide-react';
 
 export interface GoogleUser {
@@ -91,6 +93,7 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState<boolean>(true);
   const [authLoading, setAuthLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [unauthorizedDomainHost, setUnauthorizedDomainHost] = useState<string | null>(null);
 
   const [showGoogleModal, setShowGoogleModal] = useState(false);
 
@@ -358,6 +361,7 @@ export default function App() {
 
     setAuthLoading(true);
     setAuthError(null);
+    setUnauthorizedDomainHost(null);
     try {
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user) {
@@ -380,7 +384,9 @@ export default function App() {
       } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         msg = 'تم إغلاق نافذة تسجيل الدخول قبل إكمال العملية.';
       } else if (code === 'auth/unauthorized-domain') {
-        msg = 'هذا النطاق غير مصرح به في إعدادات Firebase Authentication (Authorized Domains). يرجى إضافة النطاق من لوحة تحكم Firebase.';
+        const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+        setUnauthorizedDomainHost(currentHost || null);
+        msg = `النطاق الحالي (${currentHost || 'غير معروف'}) غير مصرح به في إعدادات Firebase Authentication. أضفه إلى Authorized domains في لوحة تحكم Firebase ثم أعد المحاولة.`;
       } else if (code === 'auth/network-request-failed') {
         msg = 'تعذر الاتصال بالإنترنت. يرجى التحقق من الشبكة والمحاولة مجدداً.';
       }
@@ -607,9 +613,39 @@ export default function App() {
             </div>
 
             {authError && (
-              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 flex items-start gap-2 text-right">
-                <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
-                <p className="text-[11px] font-semibold text-red-700 dark:text-red-300 leading-relaxed">{authError}</p>
+              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 space-y-2 text-right">
+                <div className="flex items-start gap-2">
+                  <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
+                  <p className="text-[11px] font-semibold text-red-700 dark:text-red-300 leading-relaxed">{authError}</p>
+                </div>
+                {unauthorizedDomainHost && (
+                  <div className="bg-white/80 dark:bg-slate-900/60 p-2 rounded-lg border border-red-200/70 dark:border-red-800/40 space-y-1.5 text-[10px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <code className="font-mono font-bold text-slate-800 dark:text-slate-200 select-all" dir="ltr">
+                        {unauthorizedDomainHost}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(unauthorizedDomainHost);
+                          showToast(`تم نسخ النطاق: ${unauthorizedDomainHost}`, 'info');
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold cursor-pointer shrink-0"
+                      >
+                        <Copy size={11} />
+                        <span>نسخ النطاق</span>
+                      </button>
+                    </div>
+                    <a
+                      href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block text-[#0F4C81] dark:text-blue-400 font-bold underline"
+                    >
+                      فتح إعدادات النطاقات المصرح بها في Firebase Console ←
+                    </a>
+                  </div>
+                )}
               </div>
             )}
 
@@ -894,8 +930,36 @@ export default function App() {
                   </p>
 
                   {authError && (
-                    <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-[11px] font-semibold text-red-700 dark:text-red-300">
-                      {authError}
+                    <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 space-y-2 text-[11px] font-semibold text-red-700 dark:text-red-300">
+                      <p>{authError}</p>
+                      {unauthorizedDomainHost && (
+                        <div className="bg-white/80 dark:bg-slate-900/60 p-2 rounded-lg border border-red-200/70 dark:border-red-800/40 space-y-1 text-[10px]">
+                          <div className="flex items-center justify-between gap-2">
+                            <code className="font-mono font-bold text-slate-800 dark:text-slate-200 select-all" dir="ltr">
+                              {unauthorizedDomainHost}
+                            </code>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard?.writeText(unauthorizedDomainHost);
+                                showToast(`تم نسخ النطاق: ${unauthorizedDomainHost}`, 'info');
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold cursor-pointer shrink-0"
+                            >
+                              <Copy size={11} />
+                              <span>نسخ النطاق</span>
+                            </button>
+                          </div>
+                          <a
+                            href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-block text-[#0F4C81] dark:text-blue-400 font-bold underline"
+                          >
+                            فتح إعدادات النطاقات المصرح بها في Firebase Console ←
+                          </a>
+                        </div>
+                      )}
                     </div>
                   )}
 

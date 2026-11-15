@@ -43,13 +43,28 @@ button, select, input, textarea {
   transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Custom print style overrides for ultimate exam sheets quality on A4 portrait */
+/* Custom print style overrides for two-page exam sheets quality on A4 portrait */
 @media print {
+  html,
   body {
     background-color: #ffffff !important;
     color: #000000 !important;
-    font-size: 11pt !important;
+    font-size: 10pt !important;
     direction: rtl !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  #school-exams-app-root,
+  #school-exams-app-root > div,
+  #app-dynamic-content,
+  #print-section-module {
+    display: block !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
   }
   
   .no-print {
@@ -65,17 +80,31 @@ button, select, input, textarea {
     box-shadow: none !important;
     background: transparent !important;
     padding: 0 !important;
-    margin: 0 !important;
+    margin: 0 auto !important;
+    min-height: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    zoom: var(--print-zoom, 1);
+  }
+
+  .print-item {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-section-header {
+    break-after: avoid;
+    page-break-after: avoid;
   }
 
   .print-page-break {
     page-break-after: always;
   }
   
-  /* Reset margins for A4 printing */
+  /* Tighter A4 margins to fit exams comfortably inside 2 pages */
   @page {
     size: A4 portrait;
-    margin: 1.2cm 1.2cm;
+    margin: 0.75cm 0.9cm;
   }
 }
 

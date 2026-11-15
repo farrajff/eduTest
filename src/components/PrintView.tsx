@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Exam, Question, SubjectBranch } from '../types';
-import { Printer, Shuffle, FileText, CheckCircle2, ChevronRight, CornerDownLeft, Eye, HelpCircle, Check } from 'lucide-react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { Exam, Question } from '../types';
+import { Printer, FileText, HelpCircle, Check } from 'lucide-react';
 import { isOptionCorrect, resolveCorrectAnswer } from '../utils/questionUtils';
 
 // Robust MinistryLogo with multiple actual Ministry website links and wikimedia fallbacks
@@ -58,7 +58,10 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
 
   // Arabic / Eastern/Hindi Numerals (١٢٣) toggle
   const [useArabicNumerals, setUseArabicNumerals] = useState<boolean>(true);
+  const [twoPageFitEnabled, setTwoPageFitEnabled] = useState<boolean>(true);
+  const [printZoom, setPrintZoom] = useState<number>(1);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   // Helper function to convert English numerals (123) to Eastern Arabic / Hindi numerals (١٢٣)
   const toArabicNumerals = (num: any): string => {
@@ -138,6 +141,37 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
 
     setFormQuestions(finalShuffled);
   }, [selectedExam, selectedFormId]);
+
+  // Measure rendered sheet height and calculate CSS --print-zoom so printing never exceeds 2 A4 pages
+  useLayoutEffect(() => {
+    const el = sheetRef.current;
+    if (!el || !selectedExam) {
+      setPrintZoom(1);
+      return;
+    }
+
+    if (!twoPageFitEnabled) {
+      setPrintZoom(1);
+      return;
+    }
+
+    // Temporarily reset zoom variable while measuring raw content height
+    el.style.setProperty('--print-zoom', '1');
+
+    // A4 printable area with 0.75cm top/bottom margins: 2 pages = 2 * 28.2cm ≈ 2131px.
+    // Use 1920px safe threshold to account for break-inside:avoid pushes between page 1 and 2.
+    const MAX_TWO_PAGES_PX = 1920;
+    const rawHeight = el.scrollHeight;
+    const width = el.clientWidth || 726;
+    const effectiveHeight = width < 680 ? rawHeight * Math.max(0.65, width / 726) : rawHeight;
+
+    const nextZoom = effectiveHeight > MAX_TWO_PAGES_PX
+      ? Math.max(0.54, Number((MAX_TWO_PAGES_PX / effectiveHeight).toFixed(3)))
+      : 1;
+
+    setPrintZoom(nextZoom);
+    el.style.setProperty('--print-zoom', String(nextZoom));
+  }, [selectedExam, formQuestions, sheetType, selectedFormId, useArabicNumerals, twoPageFitEnabled]);
 
   const handlePrint = () => {
     // Elegant launch of browser native printing
@@ -248,7 +282,7 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
           </div>
 
           {/* Use Arabic/Eastern Numerals Switch */}
-          <div className="flex items-center gap-1.5 p-1 bg-slate-50 dark:bg-slate-755 rounded-lg border border-slate-205 dark:border-slate-705">
+          <div className="flex items-center gap-1.5 p-1 bg-slate-50 dark:bg-slate-750 rounded-lg border border-slate-200 dark:border-slate-700">
             <input
               type="checkbox"
               id="numeral-type-checkbox"
@@ -261,12 +295,31 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
             </label>
           </div>
 
+          {/* Two-page fit Switch */}
+          <div className="flex items-center gap-1.5 p-1 bg-slate-50 dark:bg-slate-750 rounded-lg border border-slate-200 dark:border-slate-700">
+            <input
+              type="checkbox"
+              id="two-page-fit-checkbox"
+              checked={twoPageFitEnabled}
+              onChange={(e) => setTwoPageFitEnabled(e.target.checked)}
+              className="rounded text-[#0F4C81] focus:ring-[#0F4C81] cursor-pointer"
+            />
+            <label htmlFor="two-page-fit-checkbox" className="text-[10px] font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+              حصر في ورقتين (A4)
+            </label>
+            {twoPageFitEnabled && printZoom < 0.99 && (
+              <span className="text-[9.5px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">
+                ملاءمة {toArabicNumerals(Math.round(printZoom * 100))}٪
+              </span>
+            )}
+          </div>
+
           <button
             onClick={handlePrint}
             className="bg-[#0F4C81] hover:bg-[#0c3d67] text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-xs flex items-center gap-1 cursor-pointer"
           >
             <Printer size={13} />
-            طباعة الاختبار (A4)
+            طباعة الاختبار (ورقتين)
           </button>
 
           {showDeleteConfirm ? (
@@ -303,20 +356,24 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
       </div>
 
       {/* Info indicator no-print */}
-      <div className="bg-amber-50 dark:bg-amber-955/20 rounded-xl p-3 border border-amber-100 dark:border-amber-900/40 flex items-start gap-2 text-xs text-amber-900 dark:text-amber-400 no-print font-sans">
+      <div className="bg-amber-50 dark:bg-amber-950/20 rounded-xl p-3 border border-amber-100 dark:border-amber-900/40 flex items-start gap-2 text-xs text-amber-900 dark:text-amber-400 no-print font-sans">
         <HelpCircle size={15} className="shrink-0 mt-0.5" />
         <p>
-          💡 <strong>نصيحة الطباعة الاحترافية:</strong> سيقوم النظام تلقائياً بإخفاء حواف وعناصر التحكم الخاصة بالموقع وجعل ورقة الاختبار بخلفية بيضاء نقية وبدون فواصل عند الضغط على زر <strong>طباعة الاختبار (A4)</strong>. احرص على تفعيل خيار "الرسومات والظلال" في خيارات طباعة متصفحك للحفاظ على محاور التوصيل والجدولة.
+          💡 <strong>نصيحة الطباعة في ورقتين:</strong> تم ضبط تنسيق الورقة والمقياس التلقائي لتطبع الأسئلة داخل <strong>صفحتين (A4) فقط</strong> دون قص أو ترحيل صفحات زائدة. عند الضغط على <strong>طباعة الاختبار</strong> تأكد من اختيار مقاس الورق A4 والهوامش الافتراضية (أو الحد الأدنى) وتفعيل طباعة رسومات الخلفية.
         </p>
       </div>
 
       {/* PRINTABLE WORK AREA CONTAINER */}
       {selectedExam && (
-        <div className="bg-white text-slate-900 rounded-xl border border-slate-150 p-6 max-w-[21cm] mx-auto min-h-[29.7cm] print-card [print-color-adjust:exact]">
+        <div
+          ref={sheetRef}
+          style={{ '--print-zoom': printZoom } as React.CSSProperties}
+          className="bg-white text-slate-900 rounded-xl border border-slate-200 p-4 print:p-0 max-w-[19.4cm] mx-auto min-h-0 print-card [print-color-adjust:exact]"
+        >
           
-          {/* Saudi MoE standard header */}
-          <div className="grid grid-cols-3 items-center border-b-2 border-double border-slate-800 pb-4 mb-4">
-            <div className="text-right text-[11px] space-y-0.5 text-slate-800 leading-normal">
+          {/* Saudi MoE standard compact header */}
+          <div className="grid grid-cols-3 items-center border-b-2 border-double border-slate-800 pb-2 mb-2">
+            <div className="text-right text-[10px] space-y-0 text-slate-800 leading-snug">
               <div className="font-bold">المملكة العربية السعودية</div>
               <div className="font-bold">وزارة التعليم</div>
               <div>الإدارة العامة للتعليم بمنطقة الرياض</div>
@@ -325,13 +382,13 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
 
             <div className="flex flex-col items-center text-center">
               {/* National Saudi Ministry Symbol Logo on standard header */}
-              <div className="w-20 h-14 flex items-center justify-center relative">
+              <div className="w-16 h-11 flex items-center justify-center relative">
                 <MinistryLogo />
               </div>
-              <div className="text-[10px] text-slate-450 mt-0.5 font-bold">الدراسات الإسلامية</div>
+              <div className="text-[9.5px] text-slate-500 font-bold leading-none mt-0.5">الدراسات الإسلامية</div>
             </div>
 
-            <div className="text-left text-[11px] space-y-0.5 text-slate-800 leading-normal">
+            <div className="text-left text-[10px] space-y-0 text-slate-800 leading-snug">
               <div>المادة: <b className="font-bold text-slate-900">الدراسات الإسلامية</b></div>
               <div>الصف: <b className="font-bold text-slate-900">الثاني المتوسط</b></div>
               <div>{selectedExam.semester}</div>
@@ -341,137 +398,136 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
           </div>
 
           {/* Exam core title, dynamic parallel Form name tag */}
-          <div className="relative text-center my-4">
-            <h1 className="text-xl font-extrabold text-slate-900 tracking-tight leading-relaxed">
-              {selectedExam.title} 
+          <div className="relative text-center my-1.5">
+            <h1 className="text-base font-extrabold text-slate-900 tracking-tight leading-snug">
+              {selectedExam.title}
             </h1>
-            <div className="absolute top-0 left-0 bg-slate-900 text-white rounded px-2.5 py-0.5 text-xs font-bold font-mono">
+            <div className="absolute top-0 left-0 bg-slate-900 text-white rounded px-2 py-0.5 text-[10.5px] font-bold font-mono">
               نموذج ({selectedFormId})
             </div>
             {sheetType === 'answer-key' && (
-              <div className="inline-block mt-1 bg-emerald-600 text-white font-bold rounded-md px-3 py-0.5 text-xs">
+              <div className="inline-block mt-0.5 bg-emerald-600 text-white font-bold rounded px-2.5 py-0.5 text-[10.5px]">
                 مفتاح الإجابة والحلول النموذجية للمصحح
               </div>
             )}
           </div>
 
-          {/* Student details line table - only shown for student exam sheets */}
+          {/* Student details line table - compact for 2-page print */}
           {sheetType === 'exam' && (
-            <div className="border border-slate-800 p-2.5 rounded-lg grid grid-cols-12 gap-x-2 text-[11px] items-center mb-6 leading-relaxed">
+            <div className="border border-slate-800 px-2 py-1.5 rounded-md grid grid-cols-12 gap-x-2 text-[10.5px] items-center mb-2.5 leading-tight">
               <div className="col-span-6 flex items-center gap-1.5 border-l border-slate-300 pl-2">
                 <span className="font-bold shrink-0 text-slate-700">اسم الطالب رباعياً:</span>
-                <span className="w-full border-b border-dotted border-slate-400 h-4"></span>
+                <span className="w-full border-b border-dotted border-slate-400 h-3"></span>
               </div>
-              <div className="col-span-2 flex items-center gap-1.5 border-l border-slate-300 px-2">
+              <div className="col-span-2 flex items-center gap-1.5 border-l border-slate-300 px-1.5">
                 <span className="font-bold shrink-0 text-slate-700">الفصل:</span>
-                <span className="w-full border-b border-dotted border-slate-400 h-4"></span>
+                <span className="w-full border-b border-dotted border-slate-400 h-3"></span>
               </div>
-              <div className="col-span-4 flex items-center gap-1.5 p-1 bg-slate-50 border border-slate-250 rounded text-center">
-                <span className="font-bold text-slate-800 w-full text-center">الدرجة النهائية المستحقة: ( {toArabicNumerals(selectedExam.totalPoints)} ) درجة</span>
+              <div className="col-span-4 flex items-center justify-center px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded text-center">
+                <span className="font-bold text-slate-800 w-full text-center">الدرجة المستحقة: ( {toArabicNumerals(selectedExam.totalPoints)} ) درجة</span>
               </div>
             </div>
           )}
 
           {/* MODEL WRITTEN QUESTIONS GRID */}
-          <div className="space-y-6">
+          <div className="space-y-2.5">
             {typesOrdered.map((typeKey, qIndex) => {
               const qsInGroup = grouped[typeKey];
               const ordinalLabel = arabOrdinals[qIndex] || `السؤال ${qIndex + 1}`;
               const typeLabel = getTypeLabel(typeKey);
-              
               const groupSumPoints = qsInGroup.reduce((sum, q) => sum + q.points, 0);
 
               return (
-                <div key={typeKey} className="space-y-4 print-page-break-inside">
+                <div key={typeKey} className="space-y-1.5">
                   
-                  {/* Question header container */}
-                  <div className="border-b border-slate-800 pb-1 flex justify-between items-center gap-2 text-sm font-bold">
-                    <span className="text-slate-900 border-r-4 border-slate-900 pr-2 leading-relaxed">
+                  {/* Question section header */}
+                  <div className="print-section-header border-b border-slate-800 pb-0.5 flex justify-between items-center gap-2 text-xs font-bold">
+                    <span className="text-slate-900 border-r-4 border-slate-900 pr-2 leading-snug">
                       {ordinalLabel}: {typeLabel}.
                     </span>
-                    <span className="shrink-0 text-xs font-extrabold text-slate-800 bg-slate-100 border border-slate-300 rounded px-2 py-0.5">
+                    <span className="shrink-0 text-[10.5px] font-extrabold text-slate-800 bg-slate-100 border border-slate-300 rounded px-1.5 py-0.5">
                       {formatPointsLabel(groupSumPoints)}
                     </span>
                   </div>
 
                   {/* Question items lists */}
-                  <div className="space-y-4 pl-1">
-                    {qsInGroup.map((q, subIdx) => (
-                      <div key={q.id} className="text-xs space-y-2 leading-relaxed text-slate-800">
-                        <div className="flex justify-between items-start gap-4">
-                          <span className="font-bold flex gap-1">
-                            <span>{toArabicNumerals(subIdx + 1)}.</span>
-                            <span className="font-serif text-slate-900 text-sm">{q.text}</span>
-                          </span>
-                          <span className="shrink-0 text-[10.5px] font-bold text-slate-600 border border-slate-300 rounded px-1.5 py-0.5 bg-slate-50/70">
-                            {formatPointsLabel(q.points)}
-                          </span>
-                        </div>
+                  <div className="space-y-1.5 pl-0.5">
+                    {qsInGroup.map((q, subIdx) => {
+                      const hasShortOptions = q.type === 'mcq' && q.options && q.options.every(o => o.trim().length <= 24);
 
-                        {/* Rendering dynamic MCQ list */}
-                        {q.type === 'mcq' && q.options && (
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 pt-1 pr-4">
-                            {q.options.map((opt, oIdx) => {
-                              const isCorrect = isOptionCorrect(q, opt, oIdx);
-                              const charLabel = ['أ', 'ب', 'ج', 'د'][oIdx] || String.fromCharCode(65 + oIdx);
-                              return (
-                                <div key={oIdx} className="flex items-center gap-2">
-                                  {/* MCQ bubbles */}
-                                  <span className={`w-5 h-5 rounded-full border border-slate-700 text-[10px] font-bold flex items-center justify-center shrink-0 ${
-                                    sheetType === 'answer-key' && isCorrect ? 'bg-emerald-600 text-white border-emerald-600 font-extrabold ring-1 ring-emerald-500' : ''
-                                  }`}>
-                                    {charLabel}
-                                  </span>
-                                  <span className={`${
-                                    sheetType === 'answer-key' && isCorrect ? 'text-emerald-800 font-extrabold underline decoration-2 decoration-emerald-600' : 'text-slate-800'
-                                  }`}>
-                                    {opt}
-                                  </span>
-                                  {sheetType === 'answer-key' && isCorrect && (
-                                    <Check size={12} className="text-emerald-700 stroke-[3]" />
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                      return (
+                        <div key={q.id} className="print-item text-[11px] space-y-1 leading-snug text-slate-800">
+                          <div className="flex justify-between items-start gap-2.5">
+                            <span className="font-bold flex gap-1 items-baseline">
+                              <span className="shrink-0">{toArabicNumerals(subIdx + 1)}.</span>
+                              <span className="font-serif text-slate-900 text-xs leading-snug">{q.text}</span>
+                            </span>
 
-                        {/* Rendering dynamic True-False blank options */}
-                        {q.type === 'true_false' && (
-                          <div className="flex justify-start gap-12 pr-4 pt-1">
-                            <span className="font-bold text-slate-400"> ( &nbsp; &nbsp; &nbsp; &nbsp; ) </span>
-                            {sheetType === 'answer-key' && (
-                              <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-extrabold text-xs">
-                                الإجابة الصحيحة: [{q.correctAnswer}]
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {q.type === 'true_false' && (
+                                sheetType === 'answer-key' ? (
+                                  <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded font-extrabold text-[10px]">
+                                    [{q.correctAnswer}]
+                                  </span>
+                                ) : (
+                                  <span className="font-bold text-slate-500 text-[11px] whitespace-nowrap">( &nbsp; &nbsp; &nbsp; )</span>
+                                )
+                              )}
+                              <span className="shrink-0 text-[9.5px] font-bold text-slate-600 border border-slate-300 rounded px-1.5 py-0.5 bg-slate-50/70">
+                                {formatPointsLabel(q.points)}
                               </span>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Matching rendering (Column A and Column B with random layout) */}
-                        {q.type === 'matching' && q.matchingPairs && (
-                          <div className="pr-4 pt-1.5 space-y-1">
-                            <div className="grid grid-cols-12 gap-2 border bg-slate-50 text-[10px] font-bold text-slate-700 p-1.5 rounded text-center">
-                              <span className="col-span-5 text-right">العمود (أ)</span>
-                              <span className="col-span-2">المطابقة</span>
-                              <span className="col-span-5 text-right">العمود (ب)</span>
                             </div>
-                            <div className="space-y-1">
-                              {q.matchingPairs.map((pair, pIdx) => {
-                                // Shuffler indices matchers for print keys
+                          </div>
+
+                          {/* Rendering dynamic MCQ list */}
+                          {q.type === 'mcq' && q.options && (
+                            <div className={`grid ${hasShortOptions ? 'grid-cols-2 sm:grid-cols-4 print:grid-cols-4' : 'grid-cols-2'} gap-x-2 gap-y-1 pt-0.5 pr-3 text-[10.5px]`}>
+                              {q.options.map((opt, oIdx) => {
+                                const isCorrect = isOptionCorrect(q, opt, oIdx);
+                                const charLabel = ['أ', 'ب', 'ج', 'د'][oIdx] || String.fromCharCode(65 + oIdx);
                                 return (
-                                  <div key={pair.id || pIdx} className="grid grid-cols-12 gap-2 border-b border-slate-100 py-1.5 text-xs items-center leading-normal">
+                                  <div key={oIdx} className="flex items-center gap-1.5">
+                                    {/* MCQ bubbles */}
+                                    <span className={`w-4 h-4 rounded-full border border-slate-700 text-[9.5px] font-bold flex items-center justify-center shrink-0 ${
+                                      sheetType === 'answer-key' && isCorrect ? 'bg-emerald-600 text-white border-emerald-600 font-extrabold ring-1 ring-emerald-500' : ''
+                                    }`}>
+                                      {charLabel}
+                                    </span>
+                                    <span className={`${
+                                      sheetType === 'answer-key' && isCorrect ? 'text-emerald-800 font-extrabold underline decoration-2 decoration-emerald-600' : 'text-slate-800'
+                                    }`}>
+                                      {opt}
+                                    </span>
+                                    {sheetType === 'answer-key' && isCorrect && (
+                                      <Check size={11} className="text-emerald-700 stroke-[3] shrink-0" />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Matching rendering (Column A and Column B with random layout) */}
+                          {q.type === 'matching' && q.matchingPairs && (
+                            <div className="pr-3 pt-0.5 space-y-0.5">
+                              <div className="grid grid-cols-12 gap-1.5 border bg-slate-50 text-[9.5px] font-bold text-slate-700 px-1.5 py-0.5 rounded text-center">
+                                <span className="col-span-5 text-right">العمود (أ)</span>
+                                <span className="col-span-2">المطابقة</span>
+                                <span className="col-span-5 text-right">العمود (ب)</span>
+                              </div>
+                              <div className="space-y-0.5">
+                                {q.matchingPairs.map((pair, pIdx) => (
+                                  <div key={pair.id || pIdx} className="grid grid-cols-12 gap-1.5 border-b border-slate-100 py-0.5 text-[10.5px] items-center leading-snug">
                                     <span className="col-span-5 text-slate-900 font-medium font-serif pr-1">{toArabicNumerals(pIdx + 1)}أ. {pair.left}</span>
                                     <span className="col-span-2 text-center text-slate-400 font-serif">
                                       {sheetType === 'answer-key' ? (
-                                        <span className="bg-emerald-600 text-white rounded px-1.5 py-0.2 text-[10px] font-bold">كود [{toArabicNumerals(pIdx + 1)}]</span>
+                                        <span className="bg-emerald-600 text-white rounded px-1.5 py-0.2 text-[9.5px] font-bold">كود [{toArabicNumerals(pIdx + 1)}]</span>
                                       ) : '......'}
                                     </span>
                                     <span className="col-span-5 text-slate-700">
                                       {sheetType === 'answer-key' ? (
                                         <span className="text-emerald-800 font-bold underline decoration-double">{pair.right}</span>
                                       ) : (
-                                        /* Shuffle Column B on student exam sheet dynamically based on seed */
                                         <span>
                                           {
                                             q.matchingPairs[
@@ -482,53 +538,55 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
                                       )}
                                     </span>
                                   </div>
-                                );
-                              })}
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )}
 
-                        {/* Ordering rendering sub items */}
-                        {q.type === 'ordering' && q.orderedItems && (
-                          <div className="pr-4 pt-1 space-y-2">
-                            <div className="flex flex-wrap gap-2 text-slate-600">
-                              {q.orderedItems.map((item, oIdx) => (
-                                <div key={oIdx} className="bg-slate-50 border border-slate-200 px-2.5 py-1 rounded">
-                                  {item}
+                          {/* Ordering rendering sub items */}
+                          {q.type === 'ordering' && q.orderedItems && (
+                            <div className="pr-3 pt-0.5 space-y-1">
+                              <div className="flex flex-wrap gap-1.5 text-slate-600 text-[10px]">
+                                {q.orderedItems.map((item, oIdx) => (
+                                  <div key={oIdx} className="bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">
+                                    {item}
+                                  </div>
+                                ))}
+                              </div>
+                              {sheetType === 'exam' ? (
+                                <div className="flex gap-2 items-center text-slate-400 text-[10px]">
+                                  <span className="shrink-0">الترتيب:</span>
+                                  <span className="w-full border-b border-dotted border-slate-400 h-3"></span>
                                 </div>
-                              ))}
+                              ) : (
+                                <div className="bg-emerald-50 px-2 py-1 rounded border border-emerald-100 text-[#2E7D32] text-[10.5px] font-bold font-serif leading-snug">
+                                  ترتيب التصحيح: {q.correctAnswer}
+                                </div>
+                              )}
                             </div>
-                            <div className="flex gap-2 items-center text-slate-400 pt-1">
-                              <span>خط الترتيب:</span>
-                              <span className="w-full border-b border-dotted border-slate-400 h-4"></span>
+                          )}
+
+                          {/* Essay / verse / fill-blank compact answer space */}
+                          {(q.type === 'essay' || q.type === 'verse_hadith' || q.type === 'fill_blank') && (
+                            <div className="pr-3 pt-0.5 w-full">
+                              {sheetType === 'exam' ? (
+                                <div className="space-y-1 w-full">
+                                  <div className="border-b border-dotted border-slate-400 h-3 w-full"></div>
+                                  {(q.type === 'essay' || q.type === 'verse_hadith') && (
+                                    <div className="border-b border-dotted border-slate-400 h-3 w-full"></div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="bg-emerald-50 px-2 py-1 rounded border border-emerald-100 text-[#2E7D32] text-[10.5px] font-bold leading-snug">
+                                  الإجابة النموذجية: {q.correctAnswer}
+                                </div>
+                              )}
                             </div>
-                            {sheetType === 'answer-key' && (
-                              <div className="bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 text-[#2E7D32] text-xs font-bold font-serif leading-relaxed">
-                                ترتيب التصحيح: {q.correctAnswer}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                          )}
 
-                        {/* Essay blank space for students */}
-                        {(q.type === 'essay' || q.type === 'verse_hadith' || q.type === 'fill_blank') && (
-                          <div className="pr-4 pt-1 space-y-1.5 w-full">
-                            {sheetType === 'exam' ? (
-                              <div className="space-y-1 w-full pt-1">
-                                <div className="border-b border-dotted border-slate-400 h-4 w-full"></div>
-                                <div className="border-b border-dotted border-slate-400 h-4 w-full"></div>
-                                {q.type === 'essay' && <div className="border-b border-dotted border-slate-400 h-4 w-full"></div>}
-                              </div>
-                            ) : (
-                              <div className="bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 text-[#2E7D32] text-xs font-bold leading-relaxed">
-                                الإجابة النموذجية: {q.correctAnswer}
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
 
                 </div>
@@ -537,7 +595,7 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
           </div>
 
           {/* Model Answer footer signature section */}
-          <div className="pt-8 mt-12 border-t border-slate-800 text-center text-xs text-slate-500 font-bold flex justify-center">
+          <div className="pt-2.5 mt-3 border-t border-slate-800 text-center text-[11px] text-slate-600 font-bold flex justify-center">
             <span className="font-serif">انتهت الأسئلة والحمد لله رب العالمين</span>
           </div>
 
