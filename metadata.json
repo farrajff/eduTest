@@ -1,0 +1,6 @@
+{
+  "name": "islamic-studies-exams",
+  "description": "منصة اختبارات الدراسات الإسلامية - مدرسة البراء بن عازب المتوسطة لإدارة بنك الأسئلة وتوليد وطباعة نماذج الاختبارات مع حفظ التعديلات سحابياً.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

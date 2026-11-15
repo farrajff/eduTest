@@ -1,0 +1,73 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account, school configuration, question bank, and saved exams",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "semester": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "questions": { "type": "array" },
+        "exams": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "email", "schoolName"]
+    },
+    "QuestionDoc": {
+      "title": "QuestionDoc",
+      "description": "An Islamic Studies question in user's question bank",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "subject": { "type": "string" },
+        "semester": { "type": "string" },
+        "unit": { "type": "string" },
+        "lesson": { "type": "string" },
+        "type": { "type": "string" },
+        "difficulty": { "type": "string" },
+        "points": { "type": "number" },
+        "text": { "type": "string" },
+        "correctAnswer": { "type": "string" },
+        "userId": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "subject", "text", "correctAnswer", "userId"]
+    },
+    "ExamDoc": {
+      "title": "ExamDoc",
+      "description": "A saved exam paper",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "semester": { "type": "string" },
+        "timeLimit": { "type": "number" },
+        "totalPoints": { "type": "number" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "schoolName", "userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document including synced bank and exams"
+    },
+    "/users/{userId}/questions/{questionId}": {
+      "schema": "QuestionDoc",
+      "description": "User specific question bank items"
+    },
+    "/users/{userId}/exams/{examId}": {
+      "schema": "ExamDoc",
+      "description": "User created exams"
+    }
+  }
+}
