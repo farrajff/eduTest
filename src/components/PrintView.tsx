@@ -35,6 +35,7 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
   const [useArabicNumerals, setUseArabicNumerals] = useState<boolean>(true);
   const [twoPageFitEnabled, setTwoPageFitEnabled] = useState<boolean>(true);
   const [printZoom, setPrintZoom] = useState<number>(1);
+  const [splitMidpointForTwoPages, setSplitMidpointForTwoPages] = useState<boolean>(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
 
@@ -117,13 +118,17 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
     setFormQuestions(finalShuffled);
   }, [selectedExam, selectedFormId]);
 
-  const isCompactExam = twoPageFitEnabled && formQuestions.length >= 14;
+  // Only switch to ultra-compact / 2-column dense layout when exam has 23+ items
+  const isCompactExam = twoPageFitEnabled && formQuestions.length >= 23;
 
-  // Measure rendered sheet height and calculate CSS --print-zoom so printing never exceeds 2 A4 pages
+  // Measure rendered sheet height so:
+  // - Exams with < 23 items spread comfortably across 2 pages (never crammed into 1 page, never spilling to 3)
+  // - Exams with >= 23 items compress cleanly to fit within 2 pages max
   const measureAndScaleForTwoPages = useCallback(() => {
     const el = sheetRef.current;
     if (!el || !selectedExam || !twoPageFitEnabled) {
       setPrintZoom(1);
+      setSplitMidpointForTwoPages(false);
       if (el) el.style.setProperty('--print-zoom', '1');
       return;
     }
@@ -131,20 +136,37 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
     // Temporarily reset zoom variable while measuring raw content height
     el.style.setProperty('--print-zoom', '1');
 
-    // A4 printable height at 0.5cm top/bottom margins: 2 * 28.7cm ≈ 2170px.
-    // Use 1500px safe threshold to absorb break-inside:avoid gaps, browser print margins, and headers/footers.
-    const MAX_TWO_PAGES_PX = 1500;
     const rawHeight = el.scrollHeight;
     const width = el.clientWidth || 726;
     const effectiveHeight = width < 680 ? rawHeight * Math.max(0.65, width / 726) : rawHeight;
 
-    const nextZoom = effectiveHeight > MAX_TWO_PAGES_PX
-      ? Math.max(0.48, Number((MAX_TWO_PAGES_PX / effectiveHeight).toFixed(3)))
-      : 1;
+    if (!isCompactExam) {
+      // Under 23 questions: keep comfortable readability (zoom = 1 up to 1740px)
+      // and split onto Page 2 if the sheet would otherwise fit on a single page (< 1090px).
+      const MAX_TWO_PAGES_PX = 1740;
+      const SINGLE_PAGE_MAX_PX = 1090;
+      const canSplit = formQuestions.length >= 4;
 
-    setPrintZoom(nextZoom);
-    el.style.setProperty('--print-zoom', String(nextZoom));
-  }, [selectedExam, twoPageFitEnabled]);
+      setSplitMidpointForTwoPages(canSplit && effectiveHeight <= SINGLE_PAGE_MAX_PX);
+
+      const nextZoom = effectiveHeight > MAX_TWO_PAGES_PX
+        ? Math.max(0.62, Number((MAX_TWO_PAGES_PX / effectiveHeight).toFixed(3)))
+        : 1;
+
+      setPrintZoom(nextZoom);
+      el.style.setProperty('--print-zoom', String(nextZoom));
+    } else {
+      // 23+ questions: compact mode without forced midpoint break, scaled safely into 2 pages
+      setSplitMidpointForTwoPages(false);
+      const MAX_TWO_PAGES_DENSE_PX = 1560;
+      const nextZoom = effectiveHeight > MAX_TWO_PAGES_DENSE_PX
+        ? Math.max(0.50, Number((MAX_TWO_PAGES_DENSE_PX / effectiveHeight).toFixed(3)))
+        : 1;
+
+      setPrintZoom(nextZoom);
+      el.style.setProperty('--print-zoom', String(nextZoom));
+    }
+  }, [selectedExam, twoPageFitEnabled, isCompactExam, formQuestions.length]);
 
   useLayoutEffect(() => {
     measureAndScaleForTwoPages();
@@ -202,6 +224,23 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
   const baseTypeOrder = ['mcq', 'true_false', 'fill_blank', 'matching', 'ordering', 'verse_hadith', 'essay'];
   const extraTypes = Object.keys(grouped).filter(t => !baseTypeOrder.includes(t));
   const typesOrdered = [...baseTypeOrder, ...extraTypes].filter(t => !!grouped[t]);
+
+  // Compute balanced section index for splitting shorter (<23 items) exams across 2 pages
+  let splitSectionIndex = -1;
+  if (splitMidpointForTwoPages && typesOrdered.length >= 2) {
+    const halfCount = formQuestions.length / 2;
+    let running = 0;
+    for (let i = 0; i < typesOrdered.length - 1; i++) {
+      running += grouped[typesOrdered[i]].length;
+      if (running >= halfCount) {
+        splitSectionIndex = i + 1;
+        break;
+      }
+    }
+    if (splitSectionIndex === -1) {
+      splitSectionIndex = Math.ceil(typesOrdered.length / 2);
+    }
+  }
 
   // Map types to premium Arabic question ordinal labels
   const arabOrdinals = ['السؤال الأول', 'السؤال الثاني', 'السؤال الثالث', 'السؤال الرابع', 'السؤال الخامس', 'السؤال السادس', 'السؤال السابع', 'السؤال الثامن'];
@@ -300,8 +339,13 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
               className="rounded text-[#0F4C81] focus:ring-[#0F4C81] cursor-pointer"
             />
             <label htmlFor="two-page-fit-checkbox" className="text-[10px] font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
-              حصر في ورقتين (A4)
+              طباعة في ورقتين (A4)
             </label>
+            {twoPageFitEnabled && splitMidpointForTwoPages && (
+              <span className="text-[9.5px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5">
+                توزيع على صفحتين
+              </span>
+            )}
             {twoPageFitEnabled && printZoom < 0.99 && (
               <span className="text-[9.5px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">
                 ملاءمة {toArabicNumerals(Math.round(printZoom * 100))}٪
@@ -363,12 +407,12 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
         <div
           ref={sheetRef}
           style={{ '--print-zoom': printZoom } as React.CSSProperties}
-          className={`bg-white text-slate-900 rounded-xl border border-slate-200 ${isCompactExam ? 'p-3' : 'p-4'} print:p-0 max-w-[19.6cm] mx-auto min-h-0 print-card [print-color-adjust:exact]`}
+          className={`bg-white text-slate-900 rounded-xl border border-slate-200 ${isCompactExam ? 'p-3' : 'p-5'} print:p-0 max-w-[19.4cm] mx-auto min-h-0 print-card [print-color-adjust:exact]`}
         >
           
-          {/* Saudi MoE standard compact header */}
-          <div className={`grid grid-cols-3 items-center border-b-2 border-double border-slate-800 ${isCompactExam ? 'pb-1.5 mb-1.5' : 'pb-2 mb-2'}`}>
-            <div className="text-right text-[9.5px] space-y-0 text-slate-800 leading-snug">
+          {/* Saudi MoE standard header */}
+          <div className={`grid grid-cols-3 items-center border-b-2 border-double border-slate-800 ${isCompactExam ? 'pb-1.5 mb-1.5' : 'pb-2.5 mb-2.5'}`}>
+            <div className={`text-right ${isCompactExam ? 'text-[9.5px]' : 'text-[10.5px]'} space-y-0.5 text-slate-800 leading-snug`}>
               <div className="font-bold">المملكة العربية السعودية</div>
               <div className="font-bold">وزارة التعليم</div>
               <div>الإدارة العامة للتعليم بمنطقة الرياض</div>
@@ -377,13 +421,13 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
 
             <div className="flex flex-col items-center text-center">
               {/* Official Saudi Ministry of Education Logo */}
-              <div className="w-[74px] h-[50px] flex items-center justify-center relative">
+              <div className={`${isCompactExam ? 'w-[74px] h-[50px]' : 'w-[84px] h-[58px]'} flex items-center justify-center relative`}>
                 <MinistryLogo />
               </div>
-              <div className="text-[9px] text-slate-500 font-bold leading-none mt-0.5">الدراسات الإسلامية</div>
+              <div className="text-[9.5px] text-slate-500 font-bold leading-none mt-0.5">الدراسات الإسلامية</div>
             </div>
 
-            <div className="text-left text-[9.5px] space-y-0 text-slate-800 leading-snug">
+            <div className={`text-left ${isCompactExam ? 'text-[9.5px]' : 'text-[10.5px]'} space-y-0.5 text-slate-800 leading-snug`}>
               <div>المادة: <b className="font-bold text-slate-900">الدراسات الإسلامية</b></div>
               <div>الصف: <b className="font-bold text-slate-900">الثاني المتوسط</b></div>
               <div>{selectedExam.semester}</div>
@@ -393,30 +437,30 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
           </div>
 
           {/* Exam core title, dynamic parallel Form name tag */}
-          <div className={`relative text-center ${isCompactExam ? 'my-1' : 'my-1.5'}`}>
-            <h1 className={`${isCompactExam ? 'text-sm' : 'text-base'} font-extrabold text-slate-900 tracking-tight leading-snug`}>
+          <div className={`relative text-center ${isCompactExam ? 'my-1' : 'my-2.5'}`}>
+            <h1 className={`${isCompactExam ? 'text-sm' : 'text-lg'} font-extrabold text-slate-900 tracking-tight leading-snug`}>
               {selectedExam.title}
             </h1>
-            <div className="absolute top-0 left-0 bg-slate-900 text-white rounded px-2 py-0.5 text-[10px] font-bold font-mono">
+            <div className="absolute top-0 left-0 bg-slate-900 text-white rounded px-2 py-0.5 text-[10.5px] font-bold font-mono">
               نموذج ({selectedFormId})
             </div>
             {sheetType === 'answer-key' && (
-              <div className="inline-block mt-0.5 bg-emerald-600 text-white font-bold rounded px-2.5 py-0.5 text-[10px]">
+              <div className="inline-block mt-1 bg-emerald-600 text-white font-bold rounded px-2.5 py-0.5 text-[10.5px]">
                 مفتاح الإجابة والحلول النموذجية للمصحح
               </div>
             )}
           </div>
 
-          {/* Student details line table - compact for 2-page print */}
+          {/* Student details line table */}
           {sheetType === 'exam' && (
-            <div className={`border border-slate-800 px-2 ${isCompactExam ? 'py-1 mb-1.5' : 'py-1.5 mb-2'} rounded-md grid grid-cols-12 gap-x-2 text-[10px] items-center leading-tight`}>
+            <div className={`border border-slate-800 px-2.5 ${isCompactExam ? 'py-1 mb-1.5 text-[10px]' : 'py-2 mb-3.5 text-[11px]'} rounded-md grid grid-cols-12 gap-x-2 items-center leading-tight`}>
               <div className="col-span-6 flex items-center gap-1.5 border-l border-slate-300 pl-2">
                 <span className="font-bold shrink-0 text-slate-700">اسم الطالب رباعياً:</span>
-                <span className="w-full border-b border-dotted border-slate-400 h-2.5"></span>
+                <span className="w-full border-b border-dotted border-slate-400 h-3"></span>
               </div>
               <div className="col-span-2 flex items-center gap-1.5 border-l border-slate-300 px-1.5">
                 <span className="font-bold shrink-0 text-slate-700">الفصل:</span>
-                <span className="w-full border-b border-dotted border-slate-400 h-2.5"></span>
+                <span className="w-full border-b border-dotted border-slate-400 h-3"></span>
               </div>
               <div className="col-span-4 flex items-center justify-center px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded text-center">
                 <span className="font-bold text-slate-800 w-full text-center">الدرجة المستحقة: ( {toArabicNumerals(selectedExam.totalPoints)} ) درجة</span>
@@ -425,55 +469,63 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
           )}
 
           {/* MODEL WRITTEN QUESTIONS GRID */}
-          <div className={isCompactExam ? 'space-y-1.5' : 'space-y-2'}>
+          <div className={isCompactExam ? 'space-y-1.5' : 'space-y-4'}>
             {typesOrdered.map((typeKey, qIndex) => {
               const qsInGroup = grouped[typeKey];
               const ordinalLabel = arabOrdinals[qIndex] || `السؤال ${qIndex + 1}`;
               const typeLabel = getTypeLabel(typeKey);
               const groupSumPoints = qsInGroup.reduce((sum, q) => sum + q.points, 0);
 
-              // Render short True/False or Fill-Blank groups in 2 columns to save ~50% vertical space
+              // Only collapse short T/F or Fill-Blank into 2 columns when exam is large (23+ items)
               const useTwoColumnItems =
-                (typeKey === 'true_false' && qsInGroup.length >= 4 && qsInGroup.every(item => item.text.length <= 72)) ||
-                (typeKey === 'fill_blank' && sheetType === 'exam' && qsInGroup.length >= 4 && qsInGroup.every(item => item.text.length <= 65));
+                isCompactExam &&
+                ((typeKey === 'true_false' && qsInGroup.length >= 4 && qsInGroup.every(item => item.text.length <= 72)) ||
+                  (typeKey === 'fill_blank' && sheetType === 'exam' && qsInGroup.length >= 4 && qsInGroup.every(item => item.text.length <= 65)));
+
+              const breakBeforeThisSection = splitMidpointForTwoPages && splitSectionIndex === qIndex;
 
               return (
-                <div key={typeKey} className={isCompactExam ? 'space-y-1' : 'space-y-1.5'}>
+                <div key={typeKey} className={`${isCompactExam ? 'space-y-1' : 'space-y-2.5'} ${breakBeforeThisSection ? 'print-break-before' : ''}`}>
                   
                   {/* Question section header */}
-                  <div className="print-section-header border-b border-slate-800 pb-0.5 flex justify-between items-center gap-2 text-[11.5px] font-bold">
+                  <div className={`print-section-header border-b border-slate-800 ${isCompactExam ? 'pb-0.5 text-[11.5px]' : 'pb-1 text-[13px]'} flex justify-between items-center gap-2 font-bold`}>
                     <span className="text-slate-900 border-r-4 border-slate-900 pr-2 leading-snug">
                       {ordinalLabel}: {typeLabel}.
                     </span>
-                    <span className="shrink-0 text-[10px] font-extrabold text-slate-800 bg-slate-100 border border-slate-300 rounded px-1.5 py-0.5">
+                    <span className={`shrink-0 ${isCompactExam ? 'text-[10px]' : 'text-[11px]'} font-extrabold text-slate-800 bg-slate-100 border border-slate-300 rounded px-2 py-0.5`}>
                       {formatPointsLabel(groupSumPoints)}
                     </span>
                   </div>
 
                   {/* Question items lists */}
-                  <div className={useTwoColumnItems ? 'grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-x-4 gap-y-1 pl-0.5' : `${isCompactExam ? 'space-y-1' : 'space-y-1.5'} pl-0.5`}>
+                  <div className={useTwoColumnItems ? 'grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-x-4 gap-y-1 pl-0.5' : `${isCompactExam ? 'space-y-1' : 'space-y-2.5'} pl-0.5`}>
                     {qsInGroup.map((q, subIdx) => {
-                      const hasShortOptions = q.type === 'mcq' && q.options && q.options.every(o => o.trim().length <= 28);
+                      const hasShortOptions = q.type === 'mcq' && q.options && q.options.every(o => o.trim().length <= (isCompactExam ? 28 : 22));
+                      const breakBeforeThisItem =
+                        splitMidpointForTwoPages &&
+                        typesOrdered.length === 1 &&
+                        qsInGroup.length >= 4 &&
+                        subIdx === Math.ceil(qsInGroup.length / 2);
 
                       return (
-                        <div key={q.id} className={`print-item ${isCompactExam ? 'text-[10.5px] space-y-0.5' : 'text-[11px] space-y-1'} leading-snug text-slate-800`}>
-                          <div className="flex justify-between items-start gap-2">
-                            <span className="font-bold flex gap-1 items-baseline">
+                        <div key={q.id} className={`print-item ${isCompactExam ? 'text-[10.5px] space-y-0.5 leading-snug' : 'text-[12px] space-y-1.5 leading-relaxed'} text-slate-800 ${breakBeforeThisItem ? 'print-break-before' : ''}`}>
+                          <div className="flex justify-between items-start gap-2.5">
+                            <span className="font-bold flex gap-1.5 items-baseline">
                               <span className="shrink-0">{toArabicNumerals(subIdx + 1)}.</span>
-                              <span className={`font-serif text-slate-900 ${isCompactExam ? 'text-[11px]' : 'text-xs'} leading-snug`}>{q.text}</span>
+                              <span className={`font-serif text-slate-900 ${isCompactExam ? 'text-[11px] leading-snug' : 'text-[13.5px] leading-relaxed'}`}>{q.text}</span>
                             </span>
 
-                            <div className="flex items-center gap-1 shrink-0">
+                            <div className="flex items-center gap-1.5 shrink-0">
                               {q.type === 'true_false' && (
                                 sheetType === 'answer-key' ? (
-                                  <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 py-0.2 rounded font-extrabold text-[9.5px]">
+                                  <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded font-extrabold text-[10px]">
                                     [{q.correctAnswer}]
                                   </span>
                                 ) : (
-                                  <span className="font-bold text-slate-500 text-[10.5px] whitespace-nowrap">( &nbsp; &nbsp; )</span>
+                                  <span className={`font-bold text-slate-500 ${isCompactExam ? 'text-[10.5px]' : 'text-xs'} whitespace-nowrap`}>( &nbsp; &nbsp; &nbsp; )</span>
                                 )
                               )}
-                              <span className="shrink-0 text-[9px] font-bold text-slate-600 border border-slate-300 rounded px-1 py-0.2 bg-slate-50/70">
+                              <span className={`shrink-0 ${isCompactExam ? 'text-[9px] px-1 py-0.2' : 'text-[10px] px-1.5 py-0.5'} font-bold text-slate-600 border border-slate-300 rounded bg-slate-50/70`}>
                                 {formatPointsLabel(q.points)}
                               </span>
                             </div>
@@ -481,14 +533,14 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
 
                           {/* Rendering dynamic MCQ list */}
                           {q.type === 'mcq' && q.options && (
-                            <div className={`grid ${hasShortOptions ? 'grid-cols-2 sm:grid-cols-4 print:grid-cols-4' : 'grid-cols-2'} gap-x-2 gap-y-0.5 pt-0.5 pr-3 text-[10px]`}>
+                            <div className={`grid ${hasShortOptions ? 'grid-cols-2 sm:grid-cols-4 print:grid-cols-4' : 'grid-cols-2'} gap-x-2.5 ${isCompactExam ? 'gap-y-0.5 pt-0.5 text-[10px]' : 'gap-y-1.5 pt-1 text-[11.5px]'} pr-3.5`}>
                               {q.options.map((opt, oIdx) => {
                                 const isCorrect = isOptionCorrect(q, opt, oIdx);
                                 const charLabel = ['أ', 'ب', 'ج', 'د'][oIdx] || String.fromCharCode(65 + oIdx);
                                 return (
-                                  <div key={oIdx} className="flex items-center gap-1">
+                                  <div key={oIdx} className="flex items-center gap-1.5">
                                     {/* MCQ bubbles */}
-                                    <span className={`w-3.5 h-3.5 rounded-full border border-slate-700 text-[9px] font-bold flex items-center justify-center shrink-0 ${
+                                    <span className={`${isCompactExam ? 'w-3.5 h-3.5 text-[9px]' : 'w-[18px] h-[18px] text-[10px]'} rounded-full border border-slate-700 font-bold flex items-center justify-center shrink-0 ${
                                       sheetType === 'answer-key' && isCorrect ? 'bg-emerald-600 text-white border-emerald-600 font-extrabold ring-1 ring-emerald-500' : ''
                                     }`}>
                                       {charLabel}
@@ -499,7 +551,7 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
                                       {opt}
                                     </span>
                                     {sheetType === 'answer-key' && isCorrect && (
-                                      <Check size={10} className="text-emerald-700 stroke-[3] shrink-0" />
+                                      <Check size={11} className="text-emerald-700 stroke-[3] shrink-0" />
                                     )}
                                   </div>
                                 );
@@ -509,19 +561,19 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
 
                           {/* Matching rendering (Column A and Column B with random layout) */}
                           {q.type === 'matching' && q.matchingPairs && (
-                            <div className="pr-3 pt-0.5 space-y-0.5">
-                              <div className="grid grid-cols-12 gap-1 border bg-slate-50 text-[9px] font-bold text-slate-700 px-1.5 py-0.5 rounded text-center">
+                            <div className="pr-3.5 pt-1 space-y-0.5">
+                              <div className={`grid grid-cols-12 gap-1.5 border bg-slate-50 ${isCompactExam ? 'text-[9px] py-0.5' : 'text-[10px] py-1'} font-bold text-slate-700 px-2 rounded text-center`}>
                                 <span className="col-span-5 text-right">العمود (أ)</span>
                                 <span className="col-span-2">المطابقة</span>
                                 <span className="col-span-5 text-right">العمود (ب)</span>
                               </div>
-                              <div className="space-y-0">
+                              <div className="space-y-0.5">
                                 {q.matchingPairs.map((pair, pIdx) => (
-                                  <div key={pair.id || pIdx} className="grid grid-cols-12 gap-1 border-b border-slate-100 py-0.5 text-[10px] items-center leading-tight">
+                                  <div key={pair.id || pIdx} className={`grid grid-cols-12 gap-1.5 border-b border-slate-100 ${isCompactExam ? 'py-0.5 text-[10px] leading-tight' : 'py-1 text-[11.5px] leading-snug'} items-center`}>
                                     <span className="col-span-5 text-slate-900 font-medium font-serif pr-1">{toArabicNumerals(pIdx + 1)}أ. {pair.left}</span>
                                     <span className="col-span-2 text-center text-slate-400 font-serif">
                                       {sheetType === 'answer-key' ? (
-                                        <span className="bg-emerald-600 text-white rounded px-1 py-0.2 text-[9px] font-bold">كود [{toArabicNumerals(pIdx + 1)}]</span>
+                                        <span className="bg-emerald-600 text-white rounded px-1.5 py-0.2 text-[9.5px] font-bold">كود [{toArabicNumerals(pIdx + 1)}]</span>
                                       ) : '......'}
                                     </span>
                                     <span className="col-span-5 text-slate-700">
@@ -545,39 +597,39 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
 
                           {/* Ordering rendering sub items */}
                           {q.type === 'ordering' && q.orderedItems && (
-                            <div className="pr-3 pt-0.5 space-y-0.5">
-                              <div className="flex flex-wrap gap-1 text-slate-600 text-[9.5px]">
+                            <div className="pr-3.5 pt-0.5 space-y-1">
+                              <div className={`flex flex-wrap gap-1.5 text-slate-600 ${isCompactExam ? 'text-[9.5px]' : 'text-[11px]'}`}>
                                 {q.orderedItems.map((item, oIdx) => (
-                                  <div key={oIdx} className="bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
+                                  <div key={oIdx} className="bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">
                                     {item}
                                   </div>
                                 ))}
                               </div>
                               {sheetType === 'exam' ? (
-                                <div className="flex gap-2 items-center text-slate-400 text-[9.5px]">
+                                <div className={`flex gap-2 items-center text-slate-400 ${isCompactExam ? 'text-[9.5px]' : 'text-[10.5px]'}`}>
                                   <span className="shrink-0">الترتيب:</span>
-                                  <span className="w-full border-b border-dotted border-slate-400 h-2.5"></span>
+                                  <span className="w-full border-b border-dotted border-slate-400 h-3"></span>
                                 </div>
                               ) : (
-                                <div className="bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 text-[#2E7D32] text-[10px] font-bold font-serif leading-snug">
+                                <div className="bg-emerald-50 px-2.5 py-1 rounded border border-emerald-100 text-[#2E7D32] text-[11px] font-bold font-serif leading-snug">
                                   ترتيب التصحيح: {q.correctAnswer}
                                 </div>
                               )}
                             </div>
                           )}
 
-                          {/* Essay / verse / fill-blank compact answer space */}
+                          {/* Essay / verse / fill-blank answer space */}
                           {(q.type === 'essay' || q.type === 'verse_hadith' || q.type === 'fill_blank') && (
-                            <div className="pr-3 pt-0.5 w-full">
+                            <div className="pr-3.5 pt-0.5 w-full">
                               {sheetType === 'exam' ? (
-                                <div className="space-y-0.5 w-full">
-                                  <div className="border-b border-dotted border-slate-400 h-2.5 w-full"></div>
-                                  {q.type === 'essay' && !isCompactExam && (
-                                    <div className="border-b border-dotted border-slate-400 h-2.5 w-full"></div>
+                                <div className="space-y-1 w-full">
+                                  <div className={`border-b border-dotted border-slate-400 ${isCompactExam ? 'h-2.5' : 'h-3.5'} w-full`}></div>
+                                  {(q.type === 'essay' || q.type === 'verse_hadith') && !isCompactExam && (
+                                    <div className="border-b border-dotted border-slate-400 h-3.5 w-full"></div>
                                   )}
                                 </div>
                               ) : (
-                                <div className="bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 text-[#2E7D32] text-[10px] font-bold leading-snug">
+                                <div className={`bg-emerald-50 px-2.5 py-1 rounded border border-emerald-100 text-[#2E7D32] ${isCompactExam ? 'text-[10px]' : 'text-[11px]'} font-bold leading-snug`}>
                                   الإجابة النموذجية: {q.correctAnswer}
                                 </div>
                               )}
@@ -595,7 +647,7 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
           </div>
 
           {/* Model Answer footer signature section */}
-          <div className="pt-1.5 mt-2 border-t border-slate-800 text-center text-[10.5px] text-slate-600 font-bold flex justify-center">
+          <div className={`${isCompactExam ? 'pt-1.5 mt-2 text-[10.5px]' : 'pt-3 mt-4 text-xs'} border-t border-slate-800 text-center text-slate-600 font-bold flex justify-center`}>
             <span className="font-serif">انتهت الأسئلة والحمد لله رب العالمين</span>
           </div>
 

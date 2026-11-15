@@ -105,11 +105,16 @@ button, select, input, textarea {
   .print-page-break {
     page-break-after: always;
   }
+
+  .print-break-before {
+    break-before: page;
+    page-break-before: always;
+  }
   
-  /* Tighter A4 margins to maximize printable area within 2 pages */
+  /* Balanced A4 margins for clean 2-page exam layout */
   @page {
     size: A4 portrait;
-    margin: 0.5cm 0.7cm;
+    margin: 0.65cm 0.8cm;
   }
 }
 
