@@ -187,6 +187,7 @@ export default function App() {
 
   // Listen to Firebase Auth state
   useEffect(() => {
+    if (!auth || !db) return;
     try {
       const unsub = onAuthStateChanged(auth, async (fbUser) => {
         if (fbUser) {
@@ -268,7 +269,7 @@ export default function App() {
     }
 
     // Sync to Cloud Firestore
-    if (auth.currentUser) {
+    if (auth?.currentUser && db) {
       const userPath = `users/${auth.currentUser.uid}`;
       const accountEmail = auth.currentUser.email || googleUser?.email || 'gate1425@gmail.com';
       try {

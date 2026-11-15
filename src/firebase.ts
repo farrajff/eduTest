@@ -1,6 +1,7 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, FirebaseApp } from 'firebase/app';
 import { 
   getAuth, 
+  Auth,
   GoogleAuthProvider, 
   signInWithPopup, 
   signOut, 
@@ -9,6 +10,7 @@ import {
 } from 'firebase/auth';
 import { 
   getFirestore, 
+  Firestore,
   doc, 
   setDoc, 
   getDoc,
@@ -19,12 +21,22 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-// Initialize Firebase App
-const app = initializeApp(firebaseConfig);
+let app: FirebaseApp | null = null;
+let authInstance: Auth | null = null;
+let dbInstance: Firestore | null = null;
 
-// Initialize Firebase Services
-export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || undefined);
+try {
+  // Initialize Firebase App
+  app = initializeApp(firebaseConfig);
+  // Initialize Firebase Services
+  authInstance = getAuth(app);
+  dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId || undefined);
+} catch (err) {
+  console.error('Firebase initialization warning:', err);
+}
+
+export const auth = authInstance as Auth;
+export const db = dbInstance as Firestore;
 
 // Google Auth Provider setup
 export const googleProvider = new GoogleAuthProvider();
@@ -60,12 +72,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+      userId: authInstance?.currentUser?.uid,
+      email: authInstance?.currentUser?.email,
+      emailVerified: authInstance?.currentUser?.emailVerified,
+      isAnonymous: authInstance?.currentUser?.isAnonymous,
+      tenantId: authInstance?.currentUser?.tenantId,
+      providerInfo: authInstance?.currentUser?.providerData?.map(provider => ({
         providerId: provider.providerId,
         email: provider.email,
       })) || []
@@ -79,8 +91,9 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 // Validate connection to Firestore on boot
 async function testConnection() {
+  if (!dbInstance) return;
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await getDocFromServer(doc(dbInstance, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error('Please check your Firebase configuration.');

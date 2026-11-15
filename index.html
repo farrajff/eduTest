@@ -12,7 +12,55 @@
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
   </head>
   <body class="bg-slate-50 text-slate-900 font-sans antialiased">
-    <div id="root"></div>
+    <div id="root">
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif;direction:rtl;color:#334155;padding:24px;text-align:center;">
+        <div>
+          <div style="font-size:16px;font-weight:700;margin-bottom:8px;">جاري تحميل منصة اختبارات الدراسات الإسلامية...</div>
+          <div id="boot-fallback-msg" style="font-size:13px;color:#64748b;"></div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var errors = [];
+        function showDiag(msg) {
+          if (window.__APP_MOUNTED__) return;
+          var el = document.getElementById('boot-fallback-msg');
+          if (el) {
+            el.innerHTML = msg;
+          }
+        }
+        window.addEventListener('error', function (e) {
+          if (e && e.message) errors.push(e.message);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          if (e && e.reason) errors.push(String(e.reason));
+        });
+        setTimeout(function () {
+          if (!window.__APP_MOUNTED__) {
+            var isGitHubRoot = location.hostname.indexOf('github.io') !== -1 && !document.querySelector('script[src*="./assets/"]');
+            if (isGitHubRoot) {
+              showDiag(
+                '<div style="max-width:480px;margin:12px auto;padding:16px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;color:#991b1b;line-height:1.8;">' +
+                '<strong>تنبيه GitHub Pages:</strong><br/>' +
+                'يتم حالياً عرض ملف المصدر الرئيسي بدلاً من نسخة البناء.<br/>' +
+                'يرجى الدخول إلى إعدادات المستودع في GitHub:<br/>' +
+                '<strong>Settings &larr; Pages &larr; Source</strong><br/>' +
+                'واختيار <strong>Deploy from a branch &larr; /docs</strong> أو <strong>GitHub Actions</strong>.' +
+                '</div>'
+              );
+            } else if (errors.length > 0) {
+              showDiag(
+                '<div style="max-width:480px;margin:12px auto;padding:16px;background:#fff;border:1px solid #fecaca;border-radius:12px;color:#991b1b;line-height:1.7;">' +
+                '<strong>تعذر تشغيل المنصة:</strong><br/><code style="font-size:11px;direction:ltr;display:inline-block;">' +
+                errors[0] +
+                '</code></div>'
+              );
+            }
+          }
+        }, 4000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
