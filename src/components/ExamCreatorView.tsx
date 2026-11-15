@@ -28,6 +28,10 @@ export default function ExamCreatorView({
   const [schoolName, setSchoolName] = useState(defaultSchoolName || 'مدرسة البراء بن عازب المتوسطة');
   const [academicYear, setAcademicYear] = useState(defaultAcademicYear || '1447هـ - 2026م');
   const [timeLimit, setTimeLimit] = useState(45); // minutes
+
+  // Exam Total Score & Equal Integer Distribution
+  const [targetTotalPoints, setTargetTotalPoints] = useState<number>(20);
+  const [autoDistributePoints, setAutoDistributePoints] = useState<boolean>(true);
   
   // Selection mode: 'manual' | 'auto'
   const [selectionMode, setSelectionMode] = useState<'manual' | 'auto'>('auto');
@@ -37,7 +41,7 @@ export default function ExamCreatorView({
   
   // Automated balancing parameters
   const [autoSubject, setAutoSubject] = useState<'all' | SubjectBranch>('all');
-  const [autoQuestionsCount, setAutoQuestionsCount] = useState(6);
+  const [autoQuestionsCount, setAutoQuestionsCount] = useState(10);
   const [easyRatio, setEasyRatio] = useState(30); // percentages
   const [mediumRatio, setMediumRatio] = useState(50);
   const [hardRatio, setHardRatio] = useState(20);
@@ -48,11 +52,11 @@ export default function ExamCreatorView({
   const [typeCounts, setTypeCounts] = useState<Record<string, number>>({
     mcq: 5,
     true_false: 5,
-    fill_blank: 2,
-    matching: 2,
-    ordering: 1,
-    essay: 1,
-    verse_hadith: 1,
+    fill_blank: 0,
+    matching: 0,
+    ordering: 0,
+    essay: 0,
+    verse_hadith: 0,
   });
 
   // Page range states ("من صفحة كذا إلى صفحة كذا")
@@ -65,14 +69,6 @@ export default function ExamCreatorView({
 
   // Preview generated / finalized list
   const [finalQuestions, setFinalQuestions] = useState<Question[]>([]);
-
-  // Pages and Lessons filtration states
-  const [selectedPagesBySubject, setSelectedPagesBySubject] = useState<Record<SubjectBranch, string[]>>({
-    'توحيد': [],
-    'تفسير': [],
-    'حديث': [],
-    'فقه': [],
-  });
 
   const [selectedLessonsBySubject, setSelectedLessonsBySubject] = useState<Record<SubjectBranch, string[]>>({
     'توحيد': [],
@@ -170,7 +166,8 @@ export default function ExamCreatorView({
       const allowedLessons = selectedLessonsBySubject[sub] || [];
 
       // Check if this lesson is selected
-      const isLessonAllowed = allowedLessons.includes(q.lesson);
+      const lessonKey = q.lesson || 'درس عام';
+      const isLessonAllowed = allowedLessons.includes(lessonKey);
       if (!isLessonAllowed) return false;
 
       // Check if page range option is checked
@@ -189,27 +186,79 @@ export default function ExamCreatorView({
     });
   }, [semesterQuestions, selectedLessonsBySubject, pageRangeActive, pageRangeStart, pageRangeEnd]);
 
-  // Clamp autoQuestionsCount when filtered pool size changes
+  // Pool filtered by branch (autoSubject)
+  const autoSubjectPool = React.useMemo(() => {
+    if (autoSubject === 'all') return filteredQuestions;
+    return filteredQuestions.filter(q => q.subject === autoSubject);
+  }, [filteredQuestions, autoSubject]);
+
+  // Pool filtered by both branch and allowedTypes (used in standard auto mode)
+  const autoEligiblePool = React.useMemo(() => {
+    return autoSubjectPool.filter(q => allowedTypes.includes(q.type));
+  }, [autoSubjectPool, allowedTypes]);
+
+  // Available counts per question type inside autoSubjectPool
+  const availableCountByType = React.useMemo(() => {
+    const counts: Record<string, number> = {
+      mcq: 0,
+      true_false: 0,
+      fill_blank: 0,
+      matching: 0,
+      ordering: 0,
+      essay: 0,
+      verse_hadith: 0,
+    };
+    autoSubjectPool.forEach(q => {
+      counts[q.type] = (counts[q.type] || 0) + 1;
+    });
+    return counts;
+  }, [autoSubjectPool]);
+
+  // Canonical print-section order so "السؤال الأخير" matches the printed exam paper order
+  const TYPE_PRINT_ORDER = ['mcq', 'true_false', 'fill_blank', 'matching', 'ordering', 'verse_hadith', 'essay'];
+
+  const sortByPrintSectionOrder = (list: Question[]): Question[] => {
+    return [...list].sort((a, b) => {
+      const idxA = TYPE_PRINT_ORDER.indexOf(a.type);
+      const idxB = TYPE_PRINT_ORDER.indexOf(b.type);
+      return (idxA === -1 ? 99 : idxA) - (idxB === -1 ? 99 : idxB);
+    });
+  };
+
+  // Distribute integer points evenly across all items; any remainder goes to the last question
+  const distributePointsEvenly = (list: Question[], totalScore: number): Question[] => {
+    if (list.length === 0) return list;
+    const cleanTotal = Math.max(1, Math.floor(Number(totalScore) || 1));
+    const count = list.length;
+    const basePoints = Math.floor(cleanTotal / count);
+    const remainder = cleanTotal % count;
+    return list.map((q, idx) => ({
+      ...q,
+      points: idx === count - 1 ? basePoints + remainder : basePoints
+    }));
+  };
+
+  // Fisher-Yates unbiased shuffle helper
+  const shuffleQuestions = (items: Question[]): Question[] => {
+    const arr = [...items];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  };
+
+  // Clamp autoQuestionsCount when eligible pool size changes
   useEffect(() => {
-    const maxAvailable = Math.min(40, filteredQuestions.length);
+    const maxAvailable = autoEligiblePool.length;
     if (autoQuestionsCount > maxAvailable && maxAvailable > 0) {
       setAutoQuestionsCount(maxAvailable);
     } else if (autoQuestionsCount < 1 && maxAvailable > 0) {
       setAutoQuestionsCount(1);
     }
-  }, [filteredQuestions, autoQuestionsCount]);
+  }, [autoEligiblePool, autoQuestionsCount]);
 
   // Scopes manipulation helper functions
-  const handleTogglePage = (subject: SubjectBranch, page: string) => {
-    setSelectedPagesBySubject(prev => {
-      const current = prev[subject] || [];
-      const updated = current.includes(page)
-        ? current.filter(p => p !== page)
-        : [...current, page];
-      return { ...prev, [subject]: updated };
-    });
-  };
-
   const handleToggleLesson = (subject: SubjectBranch, lesson: string) => {
     setSelectedLessonsBySubject(prev => {
       const current = prev[subject] || [];
@@ -218,20 +267,6 @@ export default function ExamCreatorView({
         : [...current, lesson];
       return { ...prev, [subject]: updated };
     });
-  };
-
-  const handleSelectAllPages = (subject: SubjectBranch, allPages: string[]) => {
-    setSelectedPagesBySubject(prev => ({
-      ...prev,
-      [subject]: allPages
-    }));
-  };
-
-  const handleDeselectAllPages = (subject: SubjectBranch) => {
-    setSelectedPagesBySubject(prev => ({
-      ...prev,
-      [subject]: []
-    }));
   };
 
   const handleSelectAllLessons = (subject: SubjectBranch, allLessons: string[]) => {
@@ -250,49 +285,38 @@ export default function ExamCreatorView({
   
   // Feed auto generation when dependencies or auto parameters change
   const runAutoGeneration = () => {
-    if (filteredQuestions.length === 0) {
-      setFinalQuestions([]);
-      return;
-    }
-
-    let pool = [...filteredQuestions];
-    if (autoSubject !== 'all') {
-      pool = pool.filter(q => q.subject === autoSubject);
-    }
-
-    // Filter by allowed question types
-    pool = pool.filter(q => allowedTypes.includes(q.type));
-
-    if (pool.length === 0) {
-      setFinalQuestions([]);
-      return;
-    }
-
     // Check if the user opted to customize counts specifically by type
     if (useCountByType) {
+      if (autoSubjectPool.length === 0) {
+        setFinalQuestions([]);
+        return;
+      }
+
       const result: Question[] = [];
-      const typesList = ['mcq', 'true_false', 'fill_blank', 'matching', 'ordering', 'essay', 'verse_hadith'];
-      
-      typesList.forEach(t => {
+      TYPE_PRINT_ORDER.forEach(t => {
         const countNeeded = typeCounts[t] || 0;
         if (countNeeded <= 0) return;
-        
-        const poolOfType = pool.filter(q => q.type === t).sort(() => Math.random() - 0.5);
-        const grabbed = poolOfType.slice(0, countNeeded);
-        result.push(...grabbed);
+        const poolOfType = shuffleQuestions(autoSubjectPool.filter(q => q.type === t));
+        result.push(...poolOfType.slice(0, countNeeded));
       });
 
-      setFinalQuestions(result);
+      const ordered = sortByPrintSectionOrder(result);
+      setFinalQuestions(autoDistributePoints ? distributePointsEvenly(ordered, targetTotalPoints) : ordered);
       return;
     }
 
-    // Sort or shuffle pool
-    const shuffledPool = pool.sort(() => Math.random() - 0.5);
+    if (autoEligiblePool.length === 0) {
+      setFinalQuestions([]);
+      return;
+    }
+
+    const targetTotal = Math.min(Math.max(1, autoQuestionsCount), autoEligiblePool.length);
+    const shuffledPool = shuffleQuestions(autoEligiblePool);
 
     // Calculate count per difficulty
-    const targetEasy = Math.max(1, Math.round((easyRatio / 100) * autoQuestionsCount));
-    const targetHard = Math.max(1, Math.round((hardRatio / 100) * autoQuestionsCount));
-    const targetMedium = Math.max(1, autoQuestionsCount - targetEasy - targetHard);
+    const targetEasy = Math.round((easyRatio / 100) * targetTotal);
+    const targetHard = Math.round((hardRatio / 100) * targetTotal);
+    const targetMedium = Math.max(0, targetTotal - targetEasy - targetHard);
 
     const easyPool = shuffledPool.filter(q => q.difficulty === 'سهل');
     const mediumPool = shuffledPool.filter(q => q.difficulty === 'متوسط');
@@ -300,29 +324,27 @@ export default function ExamCreatorView({
 
     const result: Question[] = [];
 
-    // Push requested difficulty counts with fallback if pool is empty
     const grab = (subPool: Question[], targetCount: number) => {
-      let grabbed = subPool.slice(0, targetCount);
+      if (targetCount <= 0) return 0;
+      const grabbed = subPool.slice(0, targetCount);
       result.push(...grabbed);
       return grabbed.length;
     };
 
-    // Grab according to ratio targets
-    let grabbedEasy = grab(easyPool, targetEasy);
-    let grabbedMedium = grab(mediumPool, targetMedium);
-    let grabbedHard = grab(hardPool, targetHard);
+    const grabbedEasy = grab(easyPool, targetEasy);
+    const grabbedMedium = grab(mediumPool, targetMedium);
+    const grabbedHard = grab(hardPool, targetHard);
 
-    // If we still need more questions, grab remaining from the master shuffled pool
-    let totalGrabbed = grabbedEasy + grabbedMedium + grabbedHard;
-    if (totalGrabbed < autoQuestionsCount) {
+    // Top up to exact targetTotal from remaining eligible questions if any difficulty lacked items
+    const totalGrabbed = grabbedEasy + grabbedMedium + grabbedHard;
+    if (totalGrabbed < targetTotal) {
       const currentIds = new Set(result.map(r => r.id));
       const leftovers = shuffledPool.filter(q => !currentIds.has(q.id));
-      const extraNeeded = autoQuestionsCount - totalGrabbed;
-      result.push(...leftovers.slice(0, extraNeeded));
+      result.push(...leftovers.slice(0, targetTotal - totalGrabbed));
     }
 
-    // Limit to actual target
-    setFinalQuestions(result.slice(0, autoQuestionsCount));
+    const ordered = sortByPrintSectionOrder(result.slice(0, targetTotal));
+    setFinalQuestions(autoDistributePoints ? distributePointsEvenly(ordered, targetTotalPoints) : ordered);
   };
 
   // Run automatically in auto-mode
@@ -330,18 +352,32 @@ export default function ExamCreatorView({
     if (selectionMode === 'auto') {
       runAutoGeneration();
     }
-  }, [selectionMode, autoSubject, autoQuestionsCount, easyRatio, mediumRatio, hardRatio, filteredQuestions, useCountByType, typeCounts, allowedTypes]);
+  }, [selectionMode, autoSubject, autoQuestionsCount, easyRatio, mediumRatio, hardRatio, autoEligiblePool, autoSubjectPool, useCountByType, typeCounts]);
 
-  // Adjust specific question points within final selection
+  // Redistribute points whenever targetTotalPoints or autoDistributePoints changes
+  useEffect(() => {
+    if (autoDistributePoints && finalQuestions.length > 0) {
+      setFinalQuestions(prev => distributePointsEvenly(prev, targetTotalPoints));
+    }
+  }, [targetTotalPoints, autoDistributePoints]);
+
+  // Adjust specific question points within final selection (switches off auto-distribution to preserve manual override)
   const handleUpdateQuestionPoints = (id: string, newPoints: number) => {
-    setFinalQuestions(prev => prev.map(q => q.id === id ? { ...q, points: Math.max(1, newPoints) } : q));
+    setAutoDistributePoints(false);
+    setFinalQuestions(prev => prev.map(q => q.id === id ? { ...q, points: Math.max(0, Math.floor(newPoints || 0)) } : q));
   };
 
-  // Sync final questions list in manual mode
+  // Sync final questions list in manual mode without losing custom order or points
   useEffect(() => {
     if (selectionMode === 'manual') {
-      const selected = questions.filter(q => selectedIds.includes(q.id));
-      setFinalQuestions(selected);
+      setFinalQuestions(prev => {
+        const selectedSet = new Set(selectedIds);
+        const kept = prev.filter(q => selectedSet.has(q.id));
+        const keptIds = new Set(kept.map(q => q.id));
+        const newlyAdded = questions.filter(q => selectedSet.has(q.id) && !keptIds.has(q.id));
+        const combined = sortByPrintSectionOrder([...kept, ...newlyAdded]);
+        return autoDistributePoints ? distributePointsEvenly(combined, targetTotalPoints) : combined;
+      });
     }
   }, [selectedIds, selectionMode, questions]);
 
@@ -358,7 +394,7 @@ export default function ExamCreatorView({
     const temp = list[index];
     list[index] = list[index - 1];
     list[index - 1] = temp;
-    setFinalQuestions(list);
+    setFinalQuestions(autoDistributePoints ? distributePointsEvenly(list, targetTotalPoints) : list);
   };
 
   const handleMoveDown = (index: number) => {
@@ -367,14 +403,17 @@ export default function ExamCreatorView({
     const temp = list[index];
     list[index] = list[index + 1];
     list[index + 1] = temp;
-    setFinalQuestions(list);
+    setFinalQuestions(autoDistributePoints ? distributePointsEvenly(list, targetTotalPoints) : list);
   };
 
   const handleRemoveQuestion = (id: string) => {
     if (selectionMode === 'manual') {
       setSelectedIds(prev => prev.filter(i => i !== id));
     } else {
-      setFinalQuestions(prev => prev.filter(q => q.id !== id));
+      setFinalQuestions(prev => {
+        const remaining = prev.filter(q => q.id !== id);
+        return autoDistributePoints ? distributePointsEvenly(remaining, targetTotalPoints) : remaining;
+      });
     }
   };
 
@@ -510,6 +549,97 @@ export default function ExamCreatorView({
                   />
                 </div>
               </div>
+
+              {/* Exam Total Score & Equal Distribution Card */}
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-700 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10.5px] font-bold text-[#0F4C81] dark:text-blue-300 flex items-center gap-1">
+                    <Award size={13} />
+                    درجة الاختبار الكلية:
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={targetTotalPoints}
+                    onChange={(e) => {
+                      setTargetTotalPoints(Math.max(1, Math.floor(Number(e.target.value) || 1)));
+                      setAutoDistributePoints(true);
+                    }}
+                    className="w-20 h-7 text-center bg-blue-50/70 dark:bg-slate-750 border border-[#0F4C81]/40 dark:border-blue-800 rounded-lg text-xs font-mono font-extrabold text-[#0F4C81] dark:text-blue-300 outline-none"
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-1">
+                  {[10, 15, 20, 25, 30, 40].map(preset => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => {
+                        setTargetTotalPoints(preset);
+                        setAutoDistributePoints(true);
+                      }}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border transition cursor-pointer ${
+                        targetTotalPoints === preset && autoDistributePoints
+                          ? 'bg-[#0F4C81] text-white border-[#0F4C81]'
+                          : 'bg-slate-50 dark:bg-slate-750 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-750/60 p-2 rounded-lg border border-slate-150 dark:border-slate-700">
+                  <label htmlFor="auto-distribute-points" className="flex items-center gap-1.5 text-[10px] font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      id="auto-distribute-points"
+                      type="checkbox"
+                      checked={autoDistributePoints}
+                      onChange={(e) => setAutoDistributePoints(e.target.checked)}
+                      className="rounded text-[#2E7D32] focus:ring-[#2E7D32] cursor-pointer"
+                    />
+                    <span>توزيع الدرجات بالتساوي بدون كسور (والمتبقي في السؤال الأخير)</span>
+                  </label>
+                </div>
+
+                {finalQuestions.length > 0 && autoDistributePoints && (() => {
+                  const n = finalQuestions.length;
+                  const base = Math.floor(targetTotalPoints / n);
+                  const rem = targetTotalPoints % n;
+                  if (targetTotalPoints < n) {
+                    return (
+                      <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-[10px] text-amber-800 dark:text-amber-300 space-y-1">
+                        <p className="font-bold">تنبيه: الدرجة الكلية ({targetTotalPoints}) أقل من عدد الفقرات ({n})، لذا ستحصل الفقرات الأولى على 0 درجة والفقرة الأخيرة على {targetTotalPoints}.</p>
+                        <button
+                          type="button"
+                          onClick={() => setTargetTotalPoints(n)}
+                          className="text-[9.5px] font-bold underline text-[#0F4C81] dark:text-blue-300 cursor-pointer"
+                        >
+                          ضبط الدرجة الكلية إلى {n} درجة (درجة لكل فقرة)
+                        </button>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="p-2 rounded-lg bg-emerald-50/80 dark:bg-emerald-950/25 border border-emerald-200 dark:border-emerald-900/50 text-[10px] text-emerald-800 dark:text-emerald-300 font-semibold leading-relaxed">
+                      {rem === 0
+                        ? `التوزيع: ${base} درجة لكل فقرة بالتساوي (${n} فقرات × ${base} = ${targetTotalPoints} درجة).`
+                        : `التوزيع: ${base} درجة لكل فقرة، وتوضع الدرجات المتبقية (${rem}) في السؤال الأخير ليصبح (${base + rem} درجة).`}
+                    </div>
+                  );
+                })()}
+
+                {!autoDistributePoints && finalQuestions.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAutoDistributePoints(true)}
+                    className="w-full py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 text-[#0F4C81] dark:text-blue-300 text-[10px] font-bold rounded-lg transition cursor-pointer"
+                  >
+                    إعادة توزيع الدرجات ({targetTotalPoints} درجة) بالتساوي الآن
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -553,50 +683,56 @@ export default function ExamCreatorView({
                   </select>
                 </div>
 
-                {/* Desired Question Types Toggle checkboxes */}
-                <div className="space-y-1.5 p-2.5 bg-slate-50 dark:bg-slate-755/50 rounded-xl border border-slate-200 dark:border-slate-700">
-                  <label className="block text-[10px] font-bold text-slate-500">صيغ وبنوك الأسئلة المراد إدراجها آلياً</label>
-                  <div className="grid grid-cols-2 gap-1.5 pt-1">
-                    {[
-                      { value: 'mcq', label: 'اختيار من متعدد' },
-                      { value: 'true_false', label: 'صح أو خطأ' },
-                      { value: 'fill_blank', label: 'أكمل الفراغ' },
-                      { value: 'matching', label: 'المزاوجة' },
-                      { value: 'ordering', label: 'الترتيب' },
-                      { value: 'essay', label: 'سؤال مقالي' },
-                      { value: 'verse_hadith', label: 'آية / حديث' }
-                    ].map((item) => {
-                      const isChecked = allowedTypes.includes(item.value as any);
-                      return (
-                        <label
-                          key={item.value}
-                          className={`flex items-center gap-1.5 p-1 rounded-md text-[9.5px] font-semibold cursor-pointer transition select-none border ${
-                            isChecked
-                              ? 'bg-[#0F4C81]/5 border-[#0F4C81] text-[#0F4C81] dark:bg-[#0F4C81]/25 dark:text-blue-300 dark:border-blue-900'
-                              : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-750 text-slate-450 dark:text-slate-400 hover:border-slate-200'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => {
-                              setAllowedTypes(prev => {
-                                if (prev.includes(item.value as any)) {
-                                  if (prev.length === 1) return prev; // keep at least one
-                                  return prev.filter(t => t !== item.value);
-                                } else {
-                                  return [...prev, item.value as any];
-                                }
-                              });
-                            }}
-                            className="rounded text-[#0F4C81] focus:ring-[#0F4C81] w-3 h-3 cursor-pointer shrink-0"
-                          />
-                          <span className="truncate">{item.label}</span>
-                        </label>
-                      );
-                    })}
+                {/* Desired Question Types Toggle checkboxes (only when not using exact count-by-type) */}
+                {!useCountByType && (
+                  <div className="space-y-1.5 p-2.5 bg-slate-50 dark:bg-slate-755/50 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <label className="block text-[10px] font-bold text-slate-500">صيغ وبنوك الأسئلة المراد إدراجها آلياً</label>
+                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      {[
+                        { value: 'mcq', label: 'اختيار من متعدد' },
+                        { value: 'true_false', label: 'صح أو خطأ' },
+                        { value: 'fill_blank', label: 'أكمل الفراغ' },
+                        { value: 'matching', label: 'المزاوجة' },
+                        { value: 'ordering', label: 'الترتيب' },
+                        { value: 'essay', label: 'سؤال مقالي' },
+                        { value: 'verse_hadith', label: 'آية / حديث' }
+                      ].map((item) => {
+                        const isChecked = allowedTypes.includes(item.value as any);
+                        const avail = availableCountByType[item.value] || 0;
+                        return (
+                          <label
+                            key={item.value}
+                            className={`flex items-center justify-between gap-1 p-1 rounded-md text-[9.5px] font-semibold cursor-pointer transition select-none border ${
+                              isChecked
+                                ? 'bg-[#0F4C81]/5 border-[#0F4C81] text-[#0F4C81] dark:bg-[#0F4C81]/25 dark:text-blue-300 dark:border-blue-900'
+                                : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-750 text-slate-450 dark:text-slate-400 hover:border-slate-200'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1 min-w-0">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  setAllowedTypes(prev => {
+                                    if (prev.includes(item.value as any)) {
+                                      if (prev.length === 1) return prev; // keep at least one
+                                      return prev.filter(t => t !== item.value);
+                                    } else {
+                                      return [...prev, item.value as any];
+                                    }
+                                  });
+                                }}
+                                className="rounded text-[#0F4C81] focus:ring-[#0F4C81] w-3 h-3 cursor-pointer shrink-0"
+                              />
+                              <span className="truncate">{item.label}</span>
+                            </span>
+                            <span className="text-[8.5px] font-mono text-slate-400 shrink-0">({avail})</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="flex items-center gap-1.5 p-1.5 bg-slate-50 dark:bg-slate-755 rounded-lg border border-slate-200 dark:border-slate-700">
                   <input
@@ -623,46 +759,72 @@ export default function ExamCreatorView({
                         { key: 'ordering', label: 'الترتيب' },
                         { key: 'essay', label: 'أسئلة مقالية' },
                         { key: 'verse_hadith', label: 'سؤال نص شرعي (آية/حديث)' }
-                      ].map(item => (
-                        <div key={item.key} className="flex justify-between items-center text-[10.5px]">
-                          <span className="text-slate-650 dark:text-slate-300 font-medium">{item.label}</span>
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              min={0}
-                              max={15}
-                              value={typeCounts[item.key] || 0}
-                              onChange={(e) => {
-                                const val = Math.max(0, Number(e.target.value));
-                                setTypeCounts(prev => ({ ...prev, [item.key]: val }));
-                              }}
-                              className="w-11 h-6 text-center font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded text-slate-800 dark:text-white text-xs outline-none"
-                            />
-                            <span className="text-[9px] text-slate-400">سؤالاً</span>
+                      ].map(item => {
+                        const avail = availableCountByType[item.key] || 0;
+                        const requested = typeCounts[item.key] || 0;
+                        const exceeds = requested > avail;
+                        return (
+                          <div key={item.key} className="flex justify-between items-center text-[10.5px]">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-slate-650 dark:text-slate-300 font-medium truncate">{item.label}</span>
+                              <span className={`text-[9px] font-mono ${avail === 0 ? 'text-slate-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                (المتوفر: {avail})
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <input
+                                type="number"
+                                min={0}
+                                max={avail}
+                                value={requested}
+                                onChange={(e) => {
+                                  const val = Math.min(avail, Math.max(0, Number(e.target.value) || 0));
+                                  setTypeCounts(prev => ({ ...prev, [item.key]: val }));
+                                }}
+                                className={`w-11 h-6 text-center font-bold bg-white dark:bg-slate-800 border rounded text-xs outline-none ${
+                                  exceeds
+                                    ? 'border-amber-400 text-amber-700 dark:text-amber-300'
+                                    : 'border-slate-200 dark:border-slate-600 text-slate-800 dark:text-white'
+                                }`}
+                              />
+                              <span className="text-[9px] text-slate-400">سؤال</span>
+                            </div>
                           </div>
+                        );
+                      })}
+                    </div>
+                    {(() => {
+                      const requestedSum = (Object.values(typeCounts) as number[]).reduce((a, b) => a + b, 0);
+                      return (
+                        <div className="pt-2 border-t border-blue-105 dark:border-slate-700 text-[10px] font-bold text-[#2e7d32] bg-emerald-50 dark:bg-emerald-950/20 p-1.5 rounded text-center space-y-0.5">
+                          <div>مجموع الأسئلة المختارة والمدرجة بالورقة: {finalQuestions.length} من {requestedSum} سؤالاً</div>
+                          {finalQuestions.length < requestedSum && (
+                            <div className="text-[9px] text-amber-700 dark:text-amber-300 font-semibold">
+                              بعض الأنواع المختارة يتوفر منها عدد أقل في {semester} ضمن الدروس المحددة.
+                            </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                    <div className="pt-2 border-t border-blue-105 dark:border-slate-700 text-[10px] font-bold text-[#2e7d32] bg-emerald-50 dark:bg-emerald-950/20 p-1.5 rounded text-center">
-                      مجموع الأسئلة المطلوب توليدها: {(Object.values(typeCounts) as number[]).reduce((a, b) => a + b, 0)} سؤالاً
-                    </div>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <>
                     <div>
                       <label className="flex justify-between text-[10px] font-bold text-slate-500 mb-1">
                         <span>العدد الإجمالي المطلوب لأسئلة الاختبار</span>
-                        <span className="text-[#0F4C81] font-mono font-bold">{autoQuestionsCount}</span>
+                        <span className="text-[#0F4C81] font-mono font-bold">{Math.min(autoQuestionsCount, autoEligiblePool.length)}</span>
                       </label>
                       <input
                         type="range"
                         min={1}
-                        max={Math.max(1, Math.min(40, filteredQuestions.length))}
-                        value={Math.min(autoQuestionsCount, Math.max(1, filteredQuestions.length))}
+                        max={Math.max(1, autoEligiblePool.length)}
+                        value={Math.min(autoQuestionsCount, Math.max(1, autoEligiblePool.length))}
                         onChange={(e) => setAutoQuestionsCount(Number(e.target.value))}
                         className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-[#0F4C81]"
                       />
-                      <span className="text-[10px] text-slate-400 mt-0.5 block font-medium">الأسئلة المتوفرة بالتصفية حالياً: {filteredQuestions.length} سؤالاً من أصل {semesterQuestions.length} في {semester}</span>
+                      <span className="text-[10px] text-slate-400 mt-0.5 block font-medium">
+                        الأسئلة المتوفرة بالفرع والأنواع والتصفية الحالية: <strong className="text-[#0F4C81] dark:text-blue-300 font-mono">{autoEligiblePool.length}</strong> سؤالاً (من أصل {semesterQuestions.length} في {semester})
+                      </span>
                     </div>
 
                     <div className="bg-slate-50 dark:bg-slate-750 p-2.5 rounded-xl space-y-1.5 border border-slate-100 dark:border-slate-700">
@@ -897,22 +1059,45 @@ export default function ExamCreatorView({
         <div className="lg:col-span-2 space-y-4">
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-100 dark:border-slate-750 shadow-xs flex flex-col justify-between min-h-[380px]">
             <div>
-              <div className="flex justify-between items-center border-b border-slate-50 dark:border-slate-700 pb-2 mb-3">
+              <div className="flex flex-wrap justify-between items-center gap-2 border-b border-slate-50 dark:border-slate-700 pb-2 mb-3">
                 <h3 className="text-xs font-bold text-slate-800 dark:text-white">
-                  {selectionMode === 'manual' ? 'تحديد الأسئلة يدوياً' : 'مخرجات التوليد والشحن التلقائي'}
+                  {selectionMode === 'manual' ? `تحديد الأسئلة يدوياً (المحدد: ${selectedIds.length})` : `مخرجات التوليد والتوزيع (${finalQuestions.length} فقرة)`}
                 </h3>
                 {selectionMode === 'manual' && (
-                  <select
-                    value={manualSubjectFilter}
-                    onChange={(e) => setManualSubjectFilter(e.target.value as 'all' | SubjectBranch)}
-                    className="bg-slate-55 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-md px-1.5 py-0.5 text-[10px] text-slate-700 dark:text-slate-300 outline-none"
-                  >
-                    <option value="all">كل الفروع</option>
-                    <option value="توحيد">توحيد</option>
-                    <option value="تفسير">تفسير</option>
-                    <option value="حديث">حديث</option>
-                    <option value="فقه">فقه</option>
-                  </select>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const visibleIds = filteredQuestions
+                          .filter(q => manualSubjectFilter === 'all' || q.subject === manualSubjectFilter)
+                          .map(q => q.id);
+                        setSelectedIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+                      }}
+                      className="text-[10px] font-bold text-[#0F4C81] dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      تحديد الظاهر ({filteredQuestions.filter(q => manualSubjectFilter === 'all' || q.subject === manualSubjectFilter).length})
+                    </button>
+                    {selectedIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedIds([])}
+                        className="text-[10px] font-bold text-red-600 hover:underline cursor-pointer"
+                      >
+                        إلغاء التحديد
+                      </button>
+                    )}
+                    <select
+                      value={manualSubjectFilter}
+                      onChange={(e) => setManualSubjectFilter(e.target.value as 'all' | SubjectBranch)}
+                      className="bg-slate-55 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-md px-1.5 py-0.5 text-[10px] text-slate-700 dark:text-slate-300 outline-none"
+                    >
+                      <option value="all">كل الفروع</option>
+                      <option value="توحيد">توحيد</option>
+                      <option value="تفسير">تفسير</option>
+                      <option value="حديث">حديث</option>
+                      <option value="فقه">فقه</option>
+                    </select>
+                  </div>
                 )}
               </div>
 
@@ -923,6 +1108,7 @@ export default function ExamCreatorView({
                     .filter(q => manualSubjectFilter === 'all' || q.subject === manualSubjectFilter)
                     .map(q => {
                       const isSelected = selectedIds.includes(q.id);
+                      const assignedQ = finalQuestions.find(curr => curr.id === q.id);
                       return (
                         <div 
                           key={q.id} 
@@ -955,11 +1141,11 @@ export default function ExamCreatorView({
                                   <span className="text-[9px] text-[#0F4C81] dark:text-blue-300 font-bold">الدرجة:</span>
                                   <input
                                     type="number"
-                                    min="1"
-                                    max="15"
-                                    value={finalQuestions.find(curr => curr.id === q.id)?.points || q.points}
+                                    min="0"
+                                    max="100"
+                                    value={assignedQ ? assignedQ.points : q.points}
                                     onChange={(e) => {
-                                      const val = Math.max(1, Number(e.target.value));
+                                      const val = Math.max(0, Math.floor(Number(e.target.value) || 0));
                                       handleUpdateQuestionPoints(q.id, val);
                                     }}
                                     className="w-11 h-6 text-center text-[10px] font-mono font-bold bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded outline-none text-[#0F4C81] dark:text-white"
@@ -995,14 +1181,16 @@ export default function ExamCreatorView({
                 <div className="space-y-3.5 max-h-[480px] overflow-y-auto pr-1">
                   {finalQuestions.length === 0 ? (
                     <div className="py-12 text-center text-slate-400 text-xs">
-                      الرجاء إدخال أسئلة ملائمة في بنك الأسئلة أولاً ليقوم الذكاء التلقائي بالاختيار منها بالترشيح.
+                      الرجاء اختيار دروس أو أنواع أسئلة متوفرة في بنك الأسئلة ليتم توليدها هنا.
                     </div>
                   ) : (
                     finalQuestions.map((q, idx) => (
                       <div key={q.id} className="bg-slate-50 dark:bg-slate-750/30 p-2.5 rounded-lg border border-slate-150 dark:border-slate-700 flex justify-between gap-4 items-start font-sans">
                         <div className="space-y-1 flex-1 text-right">
                           <div className="flex gap-1.5 items-center flex-wrap w-full">
-                            <span className="bg-[#0F4C81]/10 dark:bg-[#0F4C81]/20 text-[#0F4C81] dark:text-[#6cb1ec] text-[9px] px-1.5 py-0.5 rounded font-bold">السؤال {idx + 1}</span>
+                            <span className="bg-[#0F4C81]/10 dark:bg-[#0F4C81]/20 text-[#0F4C81] dark:text-[#6cb1ec] text-[9px] px-1.5 py-0.5 rounded font-bold">
+                              الفقرة {idx + 1}{idx === finalQuestions.length - 1 ? ' (الأخيرة)' : ''}
+                            </span>
                             <span className="bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[9px] px-1.5 py-0.5 rounded font-medium">{q.subject}</span>
                             <span className="text-slate-400 text-[10px]">({getTypeLabel(q.type)})</span>
                             <span className="text-slate-400 text-[10px]">({q.difficulty})</span>
@@ -1011,8 +1199,8 @@ export default function ExamCreatorView({
                               <span className="text-slate-500 dark:text-slate-400 font-bold">الدرجة:</span>
                               <input
                                 type="number"
-                                min={1}
-                                max={15}
+                                min={0}
+                                max={100}
                                 value={q.points}
                                 onChange={(e) => handleUpdateQuestionPoints(q.id, Number(e.target.value))}
                                 className="w-10 h-5 text-center text-[10px] font-mono font-bold bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-600 rounded outline-none text-[#0F4C81] dark:text-blue-450"

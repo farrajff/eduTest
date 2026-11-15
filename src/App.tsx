@@ -72,39 +72,27 @@ export default function App() {
     return localStorage.getItem('islamic_semester') || 'الفصل الدراسي الثاني';
   });
 
-  // Google Account and Cloud Save states (Username matches Google account)
-  const [googleUser, setGoogleUser] = useState<GoogleUser | null>(() => {
-    const saved = localStorage.getItem('islamic_google_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return null;
-      }
+  // Google Account and Cloud Save states (Derived strictly from Firebase Auth)
+  const [googleUser, setGoogleUser] = useState<GoogleUser | null>(null);
+  const [isGuest, setIsGuest] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('islamic_guest_mode') === 'true';
+    } catch {
+      return false;
     }
-    // Default account matching active user session
-    return {
-      email: 'gate1425@gmail.com',
-      name: 'gate1425@gmail.com',
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces',
-      lastSyncedAt: new Date().toLocaleTimeString('ar-SA')
-    };
   });
-
   const [teacherName, setTeacherName] = useState<string>(() => {
-    const savedUser = localStorage.getItem('islamic_google_user');
-    if (savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        if (parsed?.email) return parsed.email;
-      } catch {}
+    try {
+      return sessionStorage.getItem('islamic_guest_mode') === 'true' ? 'ضيف' : '';
+    } catch {
+      return '';
     }
-    return localStorage.getItem('islamic_teacher_name') || 'gate1425@gmail.com';
   });
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const [showGoogleModal, setShowGoogleModal] = useState(false);
-  const [googleEmailInput, setGoogleEmailInput] = useState('gate1425@gmail.com');
-  const [googleNameInput, setGoogleNameInput] = useState('gate1425@gmail.com');
 
   // 3. UI states
   const [activeTab, setActiveTab] = useState<'dashboard' | 'bank' | 'generator' | 'creator' | 'print' | 'reports'>('dashboard');
@@ -175,8 +163,6 @@ export default function App() {
     if (storedYear) setAcademicYear(storedYear);
     const storedSem = localStorage.getItem('islamic_semester');
     if (storedSem) setSemester(storedSem);
-    const storedTeacher = localStorage.getItem('islamic_teacher_name');
-    if (storedTeacher) setTeacherName(storedTeacher);
   }, []);
 
   // Sync / Auto-save triggers
@@ -185,66 +171,108 @@ export default function App() {
     setTimeout(() => setAutoSaveActive(false), 2000);
   };
 
-  // Listen to Firebase Auth state
+  // Listen to Firebase Auth state (single source of truth for signed-in user)
   useEffect(() => {
-    if (!auth || !db) return;
+    // Clear any legacy hardcoded fallback user until Firebase confirms an active session
+    if (!auth) {
+      setGoogleUser(null);
+      setTeacherName('');
+      setAuthChecking(false);
+      return;
+    }
+
+    const fallbackTimer = setTimeout(() => {
+      setAuthChecking(false);
+    }, 4500);
+
     try {
       const unsub = onAuthStateChanged(auth, async (fbUser) => {
+        clearTimeout(fallbackTimer);
         if (fbUser) {
-          const accountEmail = fbUser.email || 'gate1425@gmail.com';
-          const accountDisplayName = fbUser.email || fbUser.displayName || 'gate1425@gmail.com';
+          const accountEmail = fbUser.email || fbUser.displayName || 'مستخدم Google';
+          const accountDisplayName = fbUser.displayName || fbUser.email || 'مستخدم Google';
           const u: GoogleUser = {
             email: accountEmail,
             name: accountDisplayName,
-            avatar: fbUser.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces',
+            avatar: fbUser.photoURL || '',
             lastSyncedAt: new Date().toLocaleTimeString('ar-SA')
           };
           setGoogleUser(u);
+          setIsGuest(false);
+          try {
+            sessionStorage.removeItem('islamic_guest_mode');
+          } catch {}
           setTeacherName(accountEmail);
+          setAuthError(null);
           localStorage.setItem('islamic_google_user', JSON.stringify(u));
           localStorage.setItem('islamic_teacher_name', accountEmail);
+          setAuthChecking(false);
 
           // Fetch or create user cloud data from Firestore
-          const userPath = `users/${fbUser.uid}`;
-          try {
-            const userRef = doc(db, 'users', fbUser.uid);
-            const snap = await getDoc(userRef);
-            if (snap.exists()) {
-              const data = snap.data();
-              if (data.schoolName) setSchoolName(data.schoolName);
-              if (data.semester) setSemester(data.semester);
-              if (data.academicYear) setAcademicYear(data.academicYear);
-              if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
-                setQuestions(data.questions);
-                localStorage.setItem('islamic_questions_bank', JSON.stringify(data.questions));
+          if (db) {
+            const userPath = `users/${fbUser.uid}`;
+            try {
+              const userRef = doc(db, 'users', fbUser.uid);
+              const snap = await getDoc(userRef);
+              if (snap.exists()) {
+                const data = snap.data();
+                if (data.schoolName) setSchoolName(data.schoolName);
+                if (data.semester) setSemester(data.semester);
+                if (data.academicYear) setAcademicYear(data.academicYear);
+                if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
+                  setQuestions(data.questions);
+                  localStorage.setItem('islamic_questions_bank', JSON.stringify(data.questions));
+                }
+                if (data.exams && Array.isArray(data.exams) && data.exams.length > 0) {
+                  setExams(data.exams);
+                  localStorage.setItem('islamic_exams_list', JSON.stringify(data.exams));
+                }
+              } else {
+                let currentQs = initialQuestions;
+                try {
+                  const cachedQs = localStorage.getItem('islamic_questions_bank');
+                  if (cachedQs) {
+                    const parsed = JSON.parse(cachedQs);
+                    if (Array.isArray(parsed) && parsed.length > 0) currentQs = parsed;
+                  }
+                } catch {}
+                await setDoc(userRef, {
+                  id: fbUser.uid,
+                  email: accountEmail,
+                  name: accountDisplayName,
+                  schoolName: schoolName,
+                  academicYear: academicYear,
+                  semester: semester,
+                  teacherName: accountEmail,
+                  questions: currentQs,
+                  exams: exams,
+                  updatedAt: new Date().toISOString()
+                });
               }
-              if (data.exams && Array.isArray(data.exams) && data.exams.length > 0) {
-                setExams(data.exams);
-                localStorage.setItem('islamic_exams_list', JSON.stringify(data.exams));
-              }
-            } else {
-              // Create user document with current state
-              await setDoc(userRef, {
-                id: fbUser.uid,
-                email: accountEmail,
-                name: accountDisplayName,
-                schoolName: schoolName,
-                academicYear: academicYear,
-                semester: semester,
-                teacherName: accountEmail,
-                questions: questions,
-                exams: exams,
-                updatedAt: new Date().toISOString()
-              });
+            } catch (e) {
+              handleFirestoreError(e, OperationType.GET, userPath);
             }
-          } catch (e) {
-            handleFirestoreError(e, OperationType.GET, userPath);
           }
+        } else {
+          setGoogleUser(null);
+          let activeGuest = false;
+          try {
+            activeGuest = sessionStorage.getItem('islamic_guest_mode') === 'true';
+          } catch {}
+          setTeacherName(activeGuest ? 'ضيف' : '');
+          localStorage.removeItem('islamic_google_user');
+          localStorage.removeItem('islamic_teacher_name');
+          setAuthChecking(false);
         }
       });
-      return () => unsub();
+      return () => {
+        clearTimeout(fallbackTimer);
+        unsub();
+      };
     } catch (e) {
+      clearTimeout(fallbackTimer);
       console.warn('Firebase auth listener notice: ', e);
+      setAuthChecking(false);
     }
   }, []);
 
@@ -271,7 +299,7 @@ export default function App() {
     // Sync to Cloud Firestore
     if (auth?.currentUser && db) {
       const userPath = `users/${auth.currentUser.uid}`;
-      const accountEmail = auth.currentUser.email || googleUser?.email || 'gate1425@gmail.com';
+      const accountEmail = auth.currentUser.email || googleUser?.email || '';
       try {
         const userRef = doc(db, 'users', auth.currentUser.uid);
         await setDoc(userRef, {
@@ -293,14 +321,51 @@ export default function App() {
     }
 
     triggerAutoSaveIndicator();
-    showToast(`تم حفظ وتحديث جميع الأسئلة وتعديلاتك بنجاح على حساب Google (${googleUser?.email || 'المسجل'}) وسحابة Firestore!`, 'success');
+    if (googleUser) {
+      showToast(`تم حفظ وتحديث جميع الأسئلة وتعديلاتك بنجاح على حساب Google (${googleUser.email}) وسحابة Firestore!`, 'success');
+    } else {
+      showToast('تم حفظ جميع الأسئلة والتعديلات محلياً في وضع الضيف! للمزامنة السحابية يمكنك تسجيل الدخول بحساب Google.', 'success');
+    }
+  };
+
+  const handleGuestLogin = () => {
+    setAuthError(null);
+    setIsGuest(true);
+    setTeacherName('ضيف');
+    try {
+      sessionStorage.setItem('islamic_guest_mode', 'true');
+    } catch {}
+    showToast('تم الدخول بوضع الضيف (يتم حفظ بياناتك محلياً على هذا المتصفح).', 'info');
+  };
+
+  const handleGuestLogout = () => {
+    setIsGuest(false);
+    setTeacherName('');
+    setAuthError(null);
+    try {
+      sessionStorage.removeItem('islamic_guest_mode');
+    } catch {}
+    showToast('تم إنهاء جلسة الضيف.', 'info');
   };
 
   const handlePopupGoogleSignIn = async () => {
+    if (!auth) {
+      const msg = 'تعذر تهيئة خدمة المصادقة من Firebase.';
+      setAuthError(msg);
+      showToast(msg, 'error');
+      return false;
+    }
+
+    setAuthLoading(true);
+    setAuthError(null);
     try {
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user) {
-        const email = result.user.email || 'gate1425@gmail.com';
+        const email = result.user.email || result.user.displayName || 'مستخدم Google';
+        setIsGuest(false);
+        try {
+          sessionStorage.removeItem('islamic_guest_mode');
+        } catch {}
         setTeacherName(email);
         localStorage.setItem('islamic_teacher_name', email);
         showToast(`تم تسجيل الدخول بنجاح بحساب Google (${email})!`, 'success');
@@ -308,40 +373,42 @@ export default function App() {
         return true;
       }
     } catch (err: any) {
-      console.warn('Google popup notice: ', err?.message);
+      const code = err?.code || '';
+      let msg = 'تعذر تسجيل الدخول بحساب Google. يرجى المحاولة مرة أخرى.';
+      if (code === 'auth/popup-blocked') {
+        msg = 'قام المتصفح بحظر نافذة تسجيل الدخول المنبثقة. يرجى السماح بالنوافذ المنبثقة (Pop-ups) لهذا الموقع والمحاولة مجدداً.';
+      } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        msg = 'تم إغلاق نافذة تسجيل الدخول قبل إكمال العملية.';
+      } else if (code === 'auth/unauthorized-domain') {
+        msg = 'هذا النطاق غير مصرح به في إعدادات Firebase Authentication (Authorized Domains). يرجى إضافة النطاق من لوحة تحكم Firebase.';
+      } else if (code === 'auth/network-request-failed') {
+        msg = 'تعذر الاتصال بالإنترنت. يرجى التحقق من الشبكة والمحاولة مجدداً.';
+      }
+      setAuthError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setAuthLoading(false);
     }
     return false;
   };
 
-  const handleGoogleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const signedIn = await handlePopupGoogleSignIn();
-    if (signedIn) return;
-
-    // Direct account setup fallback when popup is blocked
-    const email = googleEmailInput.trim() || 'gate1425@gmail.com';
-    const user: GoogleUser = {
-      email,
-      name: email,
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces',
-      lastSyncedAt: new Date().toLocaleTimeString('ar-SA')
-    };
-    setGoogleUser(user);
-    setTeacherName(email);
-    localStorage.setItem('islamic_google_user', JSON.stringify(user));
-    localStorage.setItem('islamic_teacher_name', email);
-    setShowGoogleModal(false);
-    showToast(`تم تسجيل الدخول بنجاح بحساب Google (${email}) وحفظ البيانات والتعديلات!`, 'success');
-  };
-
   const handleGoogleLogout = async () => {
     try {
-      await firebaseSignOut(auth);
+      if (auth) {
+        await firebaseSignOut(auth);
+      }
     } catch {}
     setGoogleUser(null);
+    setIsGuest(false);
+    setTeacherName('');
+    setAuthError(null);
+    try {
+      sessionStorage.removeItem('islamic_guest_mode');
+    } catch {}
     localStorage.removeItem('islamic_google_user');
+    localStorage.removeItem('islamic_teacher_name');
     setShowGoogleModal(false);
-    showToast('تم تسجيل الخروج من حساب Google، والبيانات محفوظة محلياً.', 'info');
+    showToast('تم تسجيل الخروج من حساب Google بنجاح.', 'info');
   };
 
   const handleClearAllQuestions = () => {
@@ -488,6 +555,106 @@ export default function App() {
     triggerAutoSaveIndicator();
   };
 
+  if (authChecking) {
+    return (
+      <div dir="rtl" className={`min-h-screen flex flex-col items-center justify-center p-6 font-sans ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-[#F8FAFC] text-slate-800'}`}>
+        <div className="w-12 h-12 rounded-2xl bg-[#0F4C81] text-white flex items-center justify-center font-extrabold text-xl shadow-md mb-4 animate-pulse">
+          بـ
+        </div>
+        <p className="text-sm font-bold text-slate-700 dark:text-slate-200">جاري التحقق من حالة تسجيل الدخول...</p>
+        <p className="text-xs text-slate-400 mt-1">منصة بنك واختبارات الدراسات الإسلامية</p>
+      </div>
+    );
+  }
+
+  if (!googleUser && !isGuest) {
+    return (
+      <div dir="rtl" className={`min-h-screen flex flex-col items-center justify-center p-4 font-sans ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-gradient-to-br from-slate-50 via-blue-50/40 to-emerald-50/40 text-slate-800'}`}>
+        <div className="w-full max-w-md bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-700 overflow-hidden">
+          <div className="bg-gradient-to-r from-[#0F4C81] to-[#2E7D32] p-6 text-white text-center space-y-2">
+            <div className="w-12 h-12 mx-auto bg-white/15 backdrop-blur-xs rounded-2xl flex items-center justify-center font-extrabold text-xl border border-white/25 shadow-xs">
+              بـ
+            </div>
+            <h1 className="text-lg font-extrabold leading-snug">منصة بنك واختبارات الدراسات الإسلامية</h1>
+            <p className="text-xs text-blue-100 font-medium">الصف الثاني المتوسط • {schoolName}</p>
+          </div>
+
+          <div className="p-6 space-y-5">
+            <div className="text-center space-y-1.5">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/40 text-[#0F4C81] dark:text-blue-300 text-[11px] font-bold">
+                <ShieldCheck size={14} />
+                <span>اختر طريقة الدخول للمتابعة</span>
+              </div>
+              <h2 className="text-base font-extrabold text-slate-800 dark:text-white pt-1">مرحباً بك في المنصة</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                سجل دخولك بحساب Google للمزامنة السحابية بين أجهزتك، أو ادخل كضيف للعمل مباشرة مع الحفظ المحلي على هذا المتصفح.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-750 border border-slate-100 dark:border-slate-700">
+                <BookOpen size={15} className="mx-auto text-[#0F4C81] mb-1" />
+                <span className="block text-[10px] font-bold text-slate-600 dark:text-slate-300">بنك الأسئلة</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-750 border border-slate-100 dark:border-slate-700">
+                <Sparkles size={15} className="mx-auto text-amber-500 mb-1" />
+                <span className="block text-[10px] font-bold text-slate-600 dark:text-slate-300">توليد ذكي</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-750 border border-slate-100 dark:border-slate-700">
+                <Printer size={15} className="mx-auto text-[#2E7D32] mb-1" />
+                <span className="block text-[10px] font-bold text-slate-600 dark:text-slate-300">نماذج الطباعة</span>
+              </div>
+            </div>
+
+            {authError && (
+              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 flex items-start gap-2 text-right">
+                <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] font-semibold text-red-700 dark:text-red-300 leading-relaxed">{authError}</p>
+              </div>
+            )}
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                disabled={authLoading}
+                onClick={handlePopupGoogleSignIn}
+                className="w-full py-3 px-4 bg-[#4285F4] hover:bg-[#3367D6] disabled:opacity-60 text-white text-sm font-bold rounded-xl transition shadow-sm flex items-center justify-center gap-2.5 cursor-pointer active:scale-[0.99]"
+              >
+                <svg className="w-4 h-4 shrink-0 bg-white rounded-full p-0.5" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.35 24 12 24z"/>
+                  <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                </svg>
+                <span>{authLoading ? 'جاري فتح نافذة تسجيل الدخول...' : 'تسجيل الدخول بحساب Google'}</span>
+              </button>
+
+              <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+                <span>أو</span>
+                <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+              </div>
+
+              <button
+                type="button"
+                disabled={authLoading}
+                onClick={handleGuestLogin}
+                className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition border border-slate-200 dark:border-slate-600 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <User size={15} className="text-slate-500 dark:text-slate-300" />
+                <span>الدخول كضيف (حفظ محلي على المتصفح)</span>
+              </button>
+            </div>
+
+            <p className="text-[10px] text-center text-slate-400 leading-relaxed">
+              لن يتم تسجيل الدخول تلقائياً لأي حساب؛ يمكنك اختيار الدخول بحساب Google أو الدخول كضيف.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div id="school-exams-app-root" className={`min-h-screen flex flex-col font-sans transition-colors ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-[#F8FAFC] text-slate-800'}`}>
 
@@ -555,7 +722,7 @@ export default function App() {
 
           <div className="flex items-center gap-1">
             <User size={13} className="text-indigo-500" />
-            <span>المستخدم: <strong className="text-slate-800 dark:text-white font-mono">{googleUser?.email || teacherName}</strong></span>
+            <span>المستخدم: <strong className="text-slate-800 dark:text-white font-mono">{googleUser?.email || teacherName || 'ضيف'}</strong></span>
           </div>
         </div>
 
@@ -583,7 +750,7 @@ export default function App() {
                 {googleUser.avatar ? (
                   <img src={googleUser.avatar} alt="Avatar" className="w-full h-full object-cover" />
                 ) : (
-                  googleUser.name.charAt(0)
+                  (googleUser.email || googleUser.name || 'G').charAt(0).toUpperCase()
                 )}
               </div>
               <div className="hidden md:flex flex-col text-right leading-none">
@@ -593,19 +760,30 @@ export default function App() {
               <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="متصل ومحفوظ"></span>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => setShowGoogleModal(true)}
-              className="flex items-center gap-1.5 bg-white dark:bg-slate-750 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-650 text-xs font-bold transition cursor-pointer shadow-2xs"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
-                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.35 24 12 24z"/>
-                <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
-                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
-              </svg>
-              <span>دخول Google</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setShowGoogleModal(true)}
+                className="flex items-center gap-1.5 bg-white dark:bg-slate-750 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-650 text-xs font-bold transition cursor-pointer shadow-2xs"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.35 24 12 24z"/>
+                  <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                </svg>
+                <span>دخول Google</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleGuestLogout}
+                title="إنهاء جلسة الضيف والعودة لشاشة الدخول"
+                className="flex items-center gap-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-600 dark:text-slate-300 px-2 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer"
+              >
+                <LogOut size={13} />
+                <span className="hidden sm:inline">خروج الضيف</span>
+              </button>
+            </div>
           )}
 
           <button
@@ -649,7 +827,13 @@ export default function App() {
               {googleUser ? (
                 <div className="space-y-4">
                   <div className="flex items-center gap-3 p-3 bg-blue-50/60 dark:bg-blue-950/20 rounded-xl border border-blue-100 dark:border-blue-900/40">
-                    <img src={googleUser.avatar} alt="Avatar" className="w-12 h-12 rounded-full object-cover border-2 border-white shadow-xs" />
+                    {googleUser.avatar ? (
+                      <img src={googleUser.avatar} alt="Avatar" className="w-12 h-12 rounded-full object-cover border-2 border-white shadow-xs" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-base border-2 border-white shadow-xs shrink-0">
+                        {(googleUser.email || googleUser.name || 'G').charAt(0).toUpperCase()}
+                      </div>
+                    )}
                     <div className="space-y-0.5 flex-1 min-w-0">
                       <h4 className="font-bold text-slate-800 dark:text-white text-sm truncate">{googleUser.name}</h4>
                       <p className="text-xs text-blue-700 dark:text-blue-300 font-mono truncate">{googleUser.email}</p>
@@ -704,38 +888,22 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <form onSubmit={handleGoogleLogin} className="space-y-3.5">
+                <div className="space-y-4">
                   <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                     سجل دخولك بحساب Google لحفظ وتأمين بنك الأسئلة والاختبارات وتعديلاتك تلقائياً والوصول إليها من أي جهاز.
                   </p>
 
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-500 mb-1">البريد الإلكتروني لحساب Google</label>
-                    <input
-                      type="email"
-                      required
-                      value={googleEmailInput}
-                      onChange={(e) => setGoogleEmailInput(e.target.value)}
-                      placeholder="example@gmail.com"
-                      className="w-full bg-slate-50 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white font-mono outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-500 mb-1">اسم المعلم / المستخدم</label>
-                    <input
-                      type="text"
-                      required
-                      value={googleNameInput}
-                      onChange={(e) => setGoogleNameInput(e.target.value)}
-                      placeholder="اسم المعلم"
-                      className="w-full bg-slate-50 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-white outline-none focus:border-blue-500"
-                    />
-                  </div>
+                  {authError && (
+                    <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-[11px] font-semibold text-red-700 dark:text-red-300">
+                      {authError}
+                    </div>
+                  )}
 
                   <button
-                    type="submit"
-                    className="w-full py-2.5 bg-[#4285F4] hover:bg-[#3367D6] text-white text-xs font-bold rounded-xl transition shadow-xs flex items-center justify-center gap-2 cursor-pointer mt-2"
+                    type="button"
+                    disabled={authLoading}
+                    onClick={handlePopupGoogleSignIn}
+                    className="w-full py-2.5 bg-[#4285F4] hover:bg-[#3367D6] disabled:opacity-60 text-white text-xs font-bold rounded-xl transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <svg className="w-4 h-4" viewBox="0 0 24 24">
                       <path fill="#ffffff" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
@@ -743,9 +911,9 @@ export default function App() {
                       <path fill="#ffffff" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
                       <path fill="#ffffff" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
                     </svg>
-                    دخول Google وحفظ البيانات
+                    <span>{authLoading ? 'جاري تسجيل الدخول...' : 'دخول بحساب Google'}</span>
                   </button>
-                </form>
+                </div>
               )}
             </div>
           </div>
@@ -984,7 +1152,7 @@ export default function App() {
               {/* Salutations Hero Card */}
               <div className="bg-gradient-to-r from-[#0F4C81] to-[#2E7D32]/90 rounded-2xl p-4 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                 <div className="space-y-1">
-                  <h2 className="text-lg font-bold">أهلاً بك، <span className="font-mono">{googleUser?.email || teacherName}</span>!</h2>
+                  <h2 className="text-lg font-bold">أهلاً بك، <span className="font-mono">{googleUser?.email || teacherName || 'ضيف'}</span>!</h2>
                   <p className="text-blue-100 text-xs">
                     مرحباً بك في المنصة الذكية لإدارة بنك الأسئلة وتوليد وطباعة اختبارات الدراسات الإسلامية للصف الثاني المتوسط.
                   </p>

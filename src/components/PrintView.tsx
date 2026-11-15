@@ -69,12 +69,24 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
     return str.replace(/[0-9]/g, (w) => arabicDigits[+w]);
   };
 
-  // Sync initial exam
+  const formatPointsLabel = (pts: number): string => {
+    const numStr = toArabicNumerals(pts);
+    if (pts === 1) return `${numStr} درجة`;
+    if (pts === 2) return `${numStr} درجتان`;
+    if (pts >= 3 && pts <= 10) return `${numStr} درجات`;
+    return `${numStr} درجة`;
+  };
+
+  // Sync initial / latest exam when exams change
   useEffect(() => {
-    if (exams.length > 0 && !selectedExam) {
+    if (exams.length === 0) {
+      setSelectedExam(null);
+      return;
+    }
+    if (!selectedExam || !exams.some(ex => ex.id === selectedExam.id)) {
       setSelectedExam(exams[exams.length - 1]); // default to latest exam
     }
-  }, [exams]);
+  }, [exams, selectedExam]);
 
   // Handle generating the Form questions with shuffled options without losing answers
   useEffect(() => {
@@ -158,10 +170,12 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
   };
 
   const grouped = groupQuestionsByType(formQuestions);
-  const typesOrdered = ['mcq', 'true_false', 'fill_blank', 'matching', 'ordering', 'verse_hadith', 'essay'].filter(t => !!grouped[t]);
+  const baseTypeOrder = ['mcq', 'true_false', 'fill_blank', 'matching', 'ordering', 'verse_hadith', 'essay'];
+  const extraTypes = Object.keys(grouped).filter(t => !baseTypeOrder.includes(t));
+  const typesOrdered = [...baseTypeOrder, ...extraTypes].filter(t => !!grouped[t]);
 
   // Map types to premium Arabic question ordinal labels
-  const arabOrdinals = ['السؤال الأول', 'السؤال الثاني', 'السؤال الثالث', 'السؤال الرابع', 'السؤال الخامس', 'السؤال السادس', 'السؤال السابع'];
+  const arabOrdinals = ['السؤال الأول', 'السؤال الثاني', 'السؤال الثالث', 'السؤال الرابع', 'السؤال الخامس', 'السؤال السادس', 'السؤال السابع', 'السؤال الثامن'];
 
   if (exams.length === 0) {
     return (
@@ -180,15 +194,22 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
       <div className="bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-750 shadow-xs no-print flex flex-col md:flex-row justify-between items-start md:items-center gap-3.5 font-sans">
         <div className="space-y-1">
           <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400">اختر ورقة الاختبار لغرض المعاينة والطباعة:</label>
-          <select
-            value={selectedExam?.id || ''}
-            onChange={(e) => setSelectedExam(exams.find(ex => ex.id === e.target.value) || null)}
-            className="bg-slate-50 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-805 dark:text-white font-bold outline-none cursor-pointer"
-          >
-            {exams.map(ex => (
-              <option key={ex.id} value={ex.id}>{ex.title} ({ex.semester})</option>
-            ))}
-          </select>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={selectedExam?.id || ''}
+              onChange={(e) => setSelectedExam(exams.find(ex => ex.id === e.target.value) || null)}
+              className="bg-slate-50 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-805 dark:text-white font-bold outline-none cursor-pointer"
+            >
+              {exams.map(ex => (
+                <option key={ex.id} value={ex.id}>{ex.title} ({ex.semester})</option>
+              ))}
+            </select>
+            {selectedExam && (
+              <span className="text-[10.5px] font-bold text-[#0F4C81] dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/50 px-2 py-1 rounded-lg">
+                {toArabicNumerals(formQuestions.length)} فقرة • {formatPointsLabel(selectedExam.totalPoints)}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Choice of form variation and key sheet */}
@@ -364,9 +385,12 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
                 <div key={typeKey} className="space-y-4 print-page-break-inside">
                   
                   {/* Question header container */}
-                  <div className="border-b border-slate-800 pb-1 flex justify-between items-center text-sm font-bold">
+                  <div className="border-b border-slate-800 pb-1 flex justify-between items-center gap-2 text-sm font-bold">
                     <span className="text-slate-900 border-r-4 border-slate-900 pr-2 leading-relaxed">
                       {ordinalLabel}: {typeLabel}.
+                    </span>
+                    <span className="shrink-0 text-xs font-extrabold text-slate-800 bg-slate-100 border border-slate-300 rounded px-2 py-0.5">
+                      {formatPointsLabel(groupSumPoints)}
                     </span>
                   </div>
 
@@ -378,6 +402,9 @@ export default function PrintView({ exams, onDeleteExam }: PrintViewProps) {
                           <span className="font-bold flex gap-1">
                             <span>{toArabicNumerals(subIdx + 1)}.</span>
                             <span className="font-serif text-slate-900 text-sm">{q.text}</span>
+                          </span>
+                          <span className="shrink-0 text-[10.5px] font-bold text-slate-600 border border-slate-300 rounded px-1.5 py-0.5 bg-slate-50/70">
+                            {formatPointsLabel(q.points)}
                           </span>
                         </div>
 
