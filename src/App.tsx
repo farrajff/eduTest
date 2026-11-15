@@ -146,13 +146,21 @@ export default function App() {
     // Exams
     const storedExams = localStorage.getItem('islamic_exams_list');
     if (storedExams) {
-      setExams(JSON.parse(storedExams));
+      try {
+        setExams(JSON.parse(storedExams));
+      } catch {
+        setExams([]);
+      }
     }
 
     // Grades
     const storedGrades = localStorage.getItem('islamic_grades_list');
     if (storedGrades) {
-      setStudentGrades(JSON.parse(storedGrades));
+      try {
+        setStudentGrades(JSON.parse(storedGrades));
+      } catch {
+        setStudentGrades([]);
+      }
     }
 
     // Metadata personalization

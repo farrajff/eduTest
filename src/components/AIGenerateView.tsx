@@ -71,6 +71,11 @@ export default function AIGenerateView({ onAddGeneratedQuestions, defaultSemeste
         })
       });
 
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('خدمة التوليد الذكي تتطلب تشغيل الخادم الخلفي (Node.js/Express) ومفتاح GEMINI_API_KEY، ولا تعمل على الاستضافة الثابتة وحدها مثل GitHub Pages.');
+      }
+
       const data = await response.json();
 
       if (!response.ok || !data.success) {
