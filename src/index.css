@@ -66,6 +66,11 @@ button, select, input, textarea {
     max-width: 100% !important;
     width: 100% !important;
   }
+
+  #print-section-module > * {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
   
   .no-print {
     display: none !important;
@@ -101,10 +106,10 @@ button, select, input, textarea {
     page-break-after: always;
   }
   
-  /* Tighter A4 margins to fit exams comfortably inside 2 pages */
+  /* Tighter A4 margins to maximize printable area within 2 pages */
   @page {
     size: A4 portrait;
-    margin: 0.75cm 0.9cm;
+    margin: 0.5cm 0.7cm;
   }
 }
 
